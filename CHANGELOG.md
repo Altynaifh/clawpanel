@@ -7,6 +7,19 @@
 
 ## [未发布]
 
+## [0.16.2] - 2026-05-21
+
+### 修复 (Fixes)
+
+- **Dashboard 加载串行化** — 避免首屏加载、手动刷新与 Gateway 状态刷新并发执行时重复触发配置自愈写入，降低配置覆盖风险
+- **默认模型自愈保留合法配置块** — Dashboard 修复无效主模型 / Fallback 链时，不再丢弃仍存在于 providers 中、但不在当前主备链上的 `agents.defaults.models` 条目
+- **模型导入错误提示修复** — 导入 Codex / Claude Code / Gemini CLI 配置扫描失败时，显示结构化错误详情，不再出现 `[object Object]`
+- **汉化内核推荐版本判断修复** — `isLatest` 对 `-zh.N` 后缀版本按推荐版本语义比较，避免 `2026.5.18-zh.1` / `-zh.2` 等小版本提示异常
+
+### 测试与验证 (Testing)
+
+- **回归验证** — 已通过 `node --test tests/*.test.js` 和 `npm run build`
+
 ## [0.16.1] - 2026-05-21
 
 ### 修复 (Fixes)
