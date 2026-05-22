@@ -26,7 +26,7 @@ const PATTERNS = [
   // 网络
   {
     key: 'network',
-    re: /(failed to fetch|networkerror|networkfailure|enetunreach|econnreset|econnrefused|ehostunreach|err_network|fetch failed|connection refused|connection reset|getaddrinfo|dns error|no route to host|aborted|broken pipe|connect timed out|tcp connect)/i,
+    re: /(failed to fetch|networkerror|networkfailure|enetunreach|econnreset|econnrefused|ehostunreach|err_network|fetch failed|connection refused|connection reset|getaddrinfo|dns error|no route to host|aborted|broken pipe|connect timed out|tcp connect|backend service is not running|web deployment mode|后端服务未运行)/i,
   },
   // Gateway 未启动（特殊的 connection refused / port not listen 情况）
   {

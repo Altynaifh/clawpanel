@@ -231,7 +231,13 @@ export async function checkBackendHealth() {
   if (isTauriRuntime()) { _setBackendOnline(true); return true }
   try {
     const resp = await fetch('/__api/health', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}' })
-    const ok = resp.ok
+    const ct = (resp.headers.get('content-type') || '').toLowerCase()
+    if (!resp.ok || !ct.includes('application/json')) {
+      _setBackendOnline(false)
+      return false
+    }
+    const data = await resp.json().catch(() => null)
+    const ok = !!data?.ok
     _setBackendOnline(ok)
     return ok
   } catch {

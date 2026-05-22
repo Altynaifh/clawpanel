@@ -110,7 +110,7 @@ function showBackendDownOverlay() {
         <div style="color:var(--text-tertiary);margin-bottom:4px"># ${t('common.devMode')}</div>
         npm run dev<br>
         <div style="color:var(--text-tertiary);margin-top:8px;margin-bottom:4px"># ${t('common.prodMode')}</div>
-        npm run preview
+        npm run serve
       </div>
       <button class="login-btn" id="btn-backend-retry" style="margin-top:8px">
         <span id="backend-retry-text">${t('common.checkAgain')}</span>

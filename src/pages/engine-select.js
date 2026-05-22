@@ -2,6 +2,7 @@ import { navigate } from '../router.js'
 import { t } from '../lib/i18n.js'
 import { applyEngineSelection } from '../lib/engine-manager.js'
 import { toast } from '../components/toast.js'
+import { humanizeError } from '../lib/humanize-error.js'
 
 const PRIMARY_OPTIONS = [
   {
@@ -167,7 +168,7 @@ function bindClick(page) {
         navigate(option.targetRoute)
       } catch (error) {
         console.error('[engine-select] secondary choose failed:', error)
-        toast(t('engine.choiceSaveFailed'), 'error')
+        toast(humanizeError(error, t('engine.choiceSaveFailed')), 'error')
         _busy = false
         btn.classList.remove('loading')
       }
@@ -213,7 +214,7 @@ async function chooseWithAnimation(page, panel, option, engine) {
       }, 280))
     } catch (error) {
       console.error('[engine-select] choose failed:', error)
-      toast(t('engine.choiceSaveFailed'), 'error')
+      toast(humanizeError(error, t('engine.choiceSaveFailed')), 'error')
       // 失败回退：移除动画层 + 解除 busy
       removeRevealNodes()
       // stage 可能已不在 DOM（路由已切走）— 防御性访问
