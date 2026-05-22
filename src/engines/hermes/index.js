@@ -89,6 +89,7 @@ export default {
         { route: '/h/cron', label: t('sidebar.cron'), icon: 'clock' },
         { route: '/h/profiles', label: t('engine.hermesProfilesTitle'), icon: 'agents' },
         { route: '/h/gateways', label: t('engine.hermesGatewaysTitle'), icon: 'gateway' },
+        { route: '/h/channels', label: t('engine.hermesChannelsTitle'), icon: 'channels' },
         { route: '/h/kanban', label: t('engine.hermesKanbanTitle'), icon: 'inbox' },
         { route: '/h/oauth', label: t('engine.hermesOAuthTitle'), icon: 'memory' },
         { route: '/h/files', label: t('engine.hermesFilesTitle'), icon: 'folder' },
@@ -128,8 +129,6 @@ export default {
       { path: '/h/lazy-deps', loader: () => import('./pages/lazy-deps.js') },
       { path: '/h/services', loader: () => import('./pages/services.js') },
       { path: '/h/config', loader: () => import('./pages/config.js') },
-      // Batch 1 §A: /h/channels 当前是 placeholder（487 字节 stub）— 暂不挂 nav
-      // 完整实现见 Batch 3，待 Hermes 渠道完整支持时启用 sidebar 入口
       { path: '/h/channels', loader: () => import('./pages/channels.js') },
       { path: '/h/env', loader: () => import('./pages/env-editor.js') },
       // 共用页面（引擎无关）

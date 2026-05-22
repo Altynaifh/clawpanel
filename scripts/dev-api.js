@@ -12,6 +12,7 @@ import { fileURLToPath } from 'url'
 import net from 'net'
 import http from 'http'
 import crypto from 'crypto'
+import * as YAML from 'yaml'
 import * as skillhubSdk from './lib/skillhub-sdk.js'
 const DOCKER_TASK_TIMEOUT_MS = 10 * 60 * 1000
 
@@ -2597,6 +2598,252 @@ export function buildMessagingPlatformFormValues(platform, saved = {}, options =
     }
   }
   return form
+}
+
+const HERMES_CHANNEL_PLATFORMS = ['telegram', 'discord', 'slack', 'feishu']
+
+function normalizeHermesPlatform(platform) {
+  const p = String(platform || '').trim().toLowerCase()
+  return HERMES_CHANNEL_PLATFORMS.includes(p) ? p : ''
+}
+
+function toCamelCaseKey(key) {
+  return String(key || '').replace(/_([a-z0-9])/g, (_, c) => c.toUpperCase())
+}
+
+function putHermesString(form, source, key) {
+  const value = source?.[key]
+  if (typeof value === 'string') form[toCamelCaseKey(key)] = value
+}
+
+function putHermesBool(form, source, key) {
+  const value = source?.[key]
+  if (typeof value === 'boolean') form[toCamelCaseKey(key)] = value
+}
+
+function putHermesCsv(form, source, key) {
+  const value = csvForForm(source?.[key])
+  if (value) form[toCamelCaseKey(key)] = value
+}
+
+function normalizeHermesDmPolicy(raw) {
+  const value = String(raw || '').trim().toLowerCase()
+  if (value === 'pairing') return 'pair'
+  if (value === 'allow') return 'open'
+  if (value === 'deny') return 'disabled'
+  if (['pair', 'open', 'allowlist', 'disabled'].includes(value)) return value
+  return 'pair'
+}
+
+function normalizeHermesGroupPolicy(raw) {
+  const value = String(raw || '').trim().toLowerCase()
+  if (value === 'all') return 'open'
+  if (value === 'mentioned') return 'open'
+  if (value === 'deny') return 'disabled'
+  if (['open', 'allowlist', 'disabled'].includes(value)) return value
+  return 'allowlist'
+}
+
+function readHermesPlatform(config, platform) {
+  const platforms = config?.platforms && typeof config.platforms === 'object' ? config.platforms : {}
+  const entry = platforms?.[platform] && typeof platforms[platform] === 'object' ? platforms[platform] : {}
+  const extra = entry?.extra && typeof entry.extra === 'object' ? entry.extra : {}
+  return { entry, extra }
+}
+
+export function buildHermesChannelConfigValues(config = {}) {
+  const values = {}
+  for (const platform of HERMES_CHANNEL_PLATFORMS) {
+    const { entry, extra } = readHermesPlatform(config, platform)
+    const form = { enabled: entry.enabled === true }
+    if (platform === 'telegram') {
+      form.botToken = typeof entry.token === 'string' ? entry.token : ''
+    } else if (platform === 'discord') {
+      form.token = typeof entry.token === 'string' ? entry.token : ''
+    } else if (platform === 'slack') {
+      form.botToken = typeof entry.token === 'string' ? entry.token : ''
+      putHermesString(form, extra, 'app_token')
+      putHermesString(form, extra, 'signing_secret')
+      putHermesString(form, extra, 'webhook_path')
+    } else if (platform === 'feishu') {
+      for (const key of ['app_id', 'app_secret', 'domain', 'connection_mode', 'webhook_path', 'reaction_notifications']) {
+        putHermesString(form, extra, key)
+      }
+      for (const key of ['typing_indicator', 'resolve_sender_names']) {
+        putHermesBool(form, extra, key)
+      }
+    }
+    putHermesString(form, extra, 'dm_policy')
+    putHermesString(form, extra, 'group_policy')
+    putHermesBool(form, extra, 'require_mention')
+    putHermesCsv(form, extra, 'allow_from')
+    putHermesCsv(form, extra, 'group_allow_from')
+    values[platform] = form
+  }
+  return values
+}
+
+function setHermesExtra(entry, key, value) {
+  if (!entry.extra || typeof entry.extra !== 'object' || Array.isArray(entry.extra)) entry.extra = {}
+  if (value === undefined || value === null || value === '') return
+  entry.extra[key] = value
+}
+
+function normalizeHermesChannelForm(platform, form = {}) {
+  const normalized = { ...(form || {}) }
+  normalized.enabled = normalized.enabled === true || normalized.enabled === 'true' || normalized.enabled === 'on'
+  if (Object.hasOwn(normalized, 'dmPolicy')) normalized.dmPolicy = normalizeHermesDmPolicy(normalized.dmPolicy)
+  if (Object.hasOwn(normalized, 'groupPolicy')) normalized.groupPolicy = normalizeHermesGroupPolicy(normalized.groupPolicy)
+  if (Object.hasOwn(normalized, 'allowFrom')) normalized.allowFrom = csvToStringArray(normalized.allowFrom)
+  if (Object.hasOwn(normalized, 'groupAllowFrom')) normalized.groupAllowFrom = csvToStringArray(normalized.groupAllowFrom)
+  if (Object.hasOwn(normalized, 'requireMention')) {
+    normalized.requireMention = normalized.requireMention === true || normalized.requireMention === 'true' || normalized.requireMention === 'on'
+  }
+  if (platform === 'feishu') {
+    normalized.domain = String(normalized.domain || '').trim() || 'feishu'
+    normalized.connectionMode = String(normalized.connectionMode || '').trim() || 'websocket'
+    normalized.webhookPath = String(normalized.webhookPath || '').trim() || '/feishu/webhook'
+    normalized.reactionNotifications = String(normalized.reactionNotifications || '').trim() || 'off'
+    if (!Object.hasOwn(normalized, 'typingIndicator')) normalized.typingIndicator = true
+    if (!Object.hasOwn(normalized, 'resolveSenderNames')) normalized.resolveSenderNames = true
+  }
+  if (platform === 'slack') {
+    normalized.webhookPath = String(normalized.webhookPath || '').trim() || '/slack/events'
+  }
+  return normalized
+}
+
+export function mergeHermesChannelConfig(config = {}, platform, form = {}) {
+  const normalizedPlatform = normalizeHermesPlatform(platform)
+  if (!normalizedPlatform) throw new Error(`不支持的 Hermes 渠道: ${platform}`)
+  const next = mergeConfigsPreservingFields({}, config && typeof config === 'object' ? config : {})
+  if (!next.platforms || typeof next.platforms !== 'object' || Array.isArray(next.platforms)) next.platforms = {}
+  const current = next.platforms[normalizedPlatform] && typeof next.platforms[normalizedPlatform] === 'object'
+    ? next.platforms[normalizedPlatform]
+    : {}
+  const entry = mergeConfigsPreservingFields(current, {})
+  const normalized = normalizeHermesChannelForm(normalizedPlatform, form)
+  entry.enabled = normalized.enabled
+  if (normalizedPlatform === 'telegram') {
+    if (typeof normalized.botToken === 'string') entry.token = normalized.botToken.trim()
+  } else if (normalizedPlatform === 'discord') {
+    if (typeof normalized.token === 'string') entry.token = normalized.token.trim()
+  } else if (normalizedPlatform === 'slack') {
+    if (typeof normalized.botToken === 'string') entry.token = normalized.botToken.trim()
+    setHermesExtra(entry, 'app_token', String(normalized.appToken || '').trim())
+    setHermesExtra(entry, 'signing_secret', String(normalized.signingSecret || '').trim())
+    setHermesExtra(entry, 'webhook_path', String(normalized.webhookPath || '').trim())
+  } else if (normalizedPlatform === 'feishu') {
+    setHermesExtra(entry, 'app_id', String(normalized.appId || '').trim())
+    setHermesExtra(entry, 'app_secret', String(normalized.appSecret || '').trim())
+    setHermesExtra(entry, 'domain', normalized.domain)
+    setHermesExtra(entry, 'connection_mode', normalized.connectionMode)
+    setHermesExtra(entry, 'webhook_path', normalized.webhookPath)
+    setHermesExtra(entry, 'reaction_notifications', normalized.reactionNotifications)
+    setHermesExtra(entry, 'typing_indicator', !!normalized.typingIndicator)
+    setHermesExtra(entry, 'resolve_sender_names', !!normalized.resolveSenderNames)
+  }
+  if (Object.hasOwn(normalized, 'dmPolicy')) setHermesExtra(entry, 'dm_policy', normalized.dmPolicy)
+  if (Object.hasOwn(normalized, 'groupPolicy')) {
+    setHermesExtra(entry, 'group_policy', normalized.groupPolicy)
+    if (normalizedPlatform === 'feishu') setHermesExtra(entry, 'default_group_policy', normalized.groupPolicy)
+  }
+  if (Object.hasOwn(normalized, 'requireMention')) setHermesExtra(entry, 'require_mention', !!normalized.requireMention)
+  if (Array.isArray(normalized.allowFrom)) setHermesExtra(entry, 'allow_from', normalized.allowFrom)
+  if (Array.isArray(normalized.groupAllowFrom)) setHermesExtra(entry, 'group_allow_from', normalized.groupAllowFrom)
+  next.platforms[normalizedPlatform] = entry
+  return next
+}
+
+function readHermesConfigYamlObject() {
+  const configPath = path.join(hermesHome(), 'config.yaml')
+  if (!fs.existsSync(configPath)) return { configPath, exists: false, config: {} }
+  const raw = fs.readFileSync(configPath, 'utf8')
+  const parsed = raw.trim() ? YAML.parse(raw) : {}
+  if (parsed && (typeof parsed !== 'object' || Array.isArray(parsed))) {
+    throw new Error('config.yaml 顶层必须是对象')
+  }
+  return { configPath, exists: true, config: parsed || {} }
+}
+
+function writeHermesConfigYamlObject(configPath, config) {
+  fs.mkdirSync(path.dirname(configPath), { recursive: true })
+  if (fs.existsSync(configPath)) {
+    fs.copyFileSync(configPath, `${configPath}.bak-${Math.floor(Date.now() / 1000)}`)
+  }
+  fs.writeFileSync(configPath, YAML.stringify(config || {}, { lineWidth: 0 }), 'utf8')
+}
+
+function writeHermesEnvValues(updates = {}) {
+  const envPath = path.join(hermesHome(), '.env')
+  fs.mkdirSync(path.dirname(envPath), { recursive: true })
+  const raw = fs.existsSync(envPath) ? fs.readFileSync(envPath, 'utf8') : ''
+  const lines = raw.split('\n')
+  const remaining = new Set(Object.keys(updates))
+  const out = []
+  for (const line of lines) {
+    const trimmed = line.trim()
+    if (!trimmed || trimmed.startsWith('#')) {
+      out.push(line)
+      continue
+    }
+    const eq = trimmed.indexOf('=')
+    const key = eq > 0 ? trimmed.slice(0, eq).trim() : ''
+    if (key && Object.hasOwn(updates, key)) {
+      const value = updates[key]
+      if (value !== undefined && value !== null && String(value).trim() !== '') {
+        out.push(`${key}=${value}`)
+      }
+      remaining.delete(key)
+      continue
+    }
+    out.push(line)
+  }
+  for (const key of remaining) {
+    const value = updates[key]
+    if (value !== undefined && value !== null && String(value).trim() !== '') out.push(`${key}=${value}`)
+  }
+  let content = out.join('\n').replace(/\n+$/, '')
+  if (content) content += '\n'
+  fs.writeFileSync(envPath, content, 'utf8')
+}
+
+function csvEnvValue(value) {
+  return csvToStringArray(value).join(',')
+}
+
+function boolEnvValue(value) {
+  return value === true || value === 'true' || value === 'on' ? 'true' : 'false'
+}
+
+export function buildHermesChannelEnvUpdates(platform, form = {}) {
+  const updates = {}
+  if (platform === 'telegram') {
+    updates.TELEGRAM_BOT_TOKEN = String(form.botToken || '').trim()
+    updates.TELEGRAM_ALLOWED_USERS = csvEnvValue(form.allowFrom)
+    updates.TELEGRAM_GROUP_ALLOWED_USERS = csvEnvValue(form.groupAllowFrom)
+    if (Object.hasOwn(form, 'requireMention')) updates.TELEGRAM_REQUIRE_MENTION = boolEnvValue(form.requireMention)
+  } else if (platform === 'discord') {
+    updates.DISCORD_BOT_TOKEN = String(form.token || '').trim()
+    updates.DISCORD_ALLOWED_USERS = csvEnvValue(form.allowFrom)
+    if (Object.hasOwn(form, 'requireMention')) updates.DISCORD_REQUIRE_MENTION = boolEnvValue(form.requireMention)
+  } else if (platform === 'slack') {
+    updates.SLACK_BOT_TOKEN = String(form.botToken || '').trim()
+    updates.SLACK_APP_TOKEN = String(form.appToken || '').trim()
+    updates.SLACK_ALLOWED_USERS = csvEnvValue(form.allowFrom)
+    if (Object.hasOwn(form, 'requireMention')) updates.SLACK_REQUIRE_MENTION = boolEnvValue(form.requireMention)
+  } else if (platform === 'feishu') {
+    updates.FEISHU_APP_ID = String(form.appId || '').trim()
+    updates.FEISHU_APP_SECRET = String(form.appSecret || '').trim()
+    updates.FEISHU_DOMAIN = String(form.domain || 'feishu').trim()
+    updates.FEISHU_CONNECTION_MODE = String(form.connectionMode || 'websocket').trim()
+    updates.FEISHU_WEBHOOK_PATH = String(form.webhookPath || '/feishu/webhook').trim()
+    updates.FEISHU_ALLOWED_USERS = csvEnvValue(form.allowFrom)
+    updates.FEISHU_GROUP_POLICY = String(form.groupPolicy || 'allowlist').trim()
+    updates.FEISHU_REQUIRE_MENTION = Object.hasOwn(form, 'requireMention') ? boolEnvValue(form.requireMention) : 'true'
+    updates.FEISHU_REACTIONS = String(form.reactionNotifications || '').trim() === 'off' ? 'false' : 'true'
+  }
+  return updates
 }
 
 function channelHasQqbotCredentials(entry) {
@@ -7709,6 +7956,29 @@ const handlers = {
     } catch {}
     const displayModel = modelName.includes('/') ? modelName.slice(modelName.indexOf('/') + 1) : modelName
     return { model: displayModel, model_raw: modelName, base_url: baseUrl, provider, api_key: apiKey, config_exists: fs.existsSync(configPath) }
+  },
+
+  hermes_channel_config_read() {
+    const { configPath, exists, config } = readHermesConfigYamlObject()
+    return {
+      exists,
+      configPath,
+      values: buildHermesChannelConfigValues(config),
+    }
+  },
+
+  hermes_channel_config_save({ platform, form } = {}) {
+    const normalizedPlatform = normalizeHermesPlatform(platform)
+    if (!normalizedPlatform) throw new Error(`不支持的 Hermes 渠道: ${platform || ''}`)
+    const { configPath, config } = readHermesConfigYamlObject()
+    const next = mergeHermesChannelConfig(config, normalizedPlatform, form || {})
+    writeHermesConfigYamlObject(configPath, next)
+    writeHermesEnvValues(buildHermesChannelEnvUpdates(normalizedPlatform, form || {}))
+    return {
+      ok: true,
+      configPath,
+      values: buildHermesChannelConfigValues(next)[normalizedPlatform],
+    }
   },
 
   // P1-3 lazy_deps: Web 模式下不能调 venv python，但仍提供 feature 列表 + 提示用户走桌面端装

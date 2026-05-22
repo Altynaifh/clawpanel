@@ -2148,6 +2148,639 @@ fn merge_env_file(existing: &str, managed_keys: &[&str], new_pairs: &[(String, S
 }
 
 // ---------------------------------------------------------------------------
+// Hermes 渠道配置 — 读写 ~/.hermes/config.yaml 的 platforms.<platform>，
+// 并同步 Hermes 运行时仍会读取的 .env 变量。
+// ---------------------------------------------------------------------------
+
+const HERMES_CHANNEL_PLATFORMS: [&str; 4] = ["telegram", "discord", "slack", "feishu"];
+
+fn normalize_hermes_channel_platform(platform: &str) -> Option<&'static str> {
+    let platform = platform.trim().to_ascii_lowercase();
+    HERMES_CHANNEL_PLATFORMS
+        .iter()
+        .copied()
+        .find(|item| *item == platform)
+}
+
+fn yaml_key(key: &str) -> serde_yaml::Value {
+    serde_yaml::Value::String(key.to_string())
+}
+
+fn yaml_get<'a>(map: &'a serde_yaml::Mapping, key: &str) -> Option<&'a serde_yaml::Value> {
+    map.get(yaml_key(key))
+}
+
+fn yaml_get_mapping<'a>(
+    map: &'a serde_yaml::Mapping,
+    key: &str,
+) -> Option<&'a serde_yaml::Mapping> {
+    yaml_get(map, key).and_then(|v| v.as_mapping())
+}
+
+fn yaml_string_field(map: &serde_yaml::Mapping, key: &str) -> Option<String> {
+    yaml_get(map, key)
+        .and_then(|v| v.as_str())
+        .map(|v| v.to_string())
+}
+
+fn yaml_bool_field(map: &serde_yaml::Mapping, key: &str) -> Option<bool> {
+    yaml_get(map, key).and_then(|v| v.as_bool())
+}
+
+fn yaml_csv_field(map: &serde_yaml::Mapping, key: &str) -> Option<String> {
+    let value = yaml_get(map, key)?;
+    if let Some(items) = value.as_sequence() {
+        let joined = items
+            .iter()
+            .filter_map(|item| item.as_str().map(str::trim))
+            .filter(|item| !item.is_empty())
+            .collect::<Vec<_>>()
+            .join(", ");
+        if joined.is_empty() {
+            None
+        } else {
+            Some(joined)
+        }
+    } else {
+        value
+            .as_str()
+            .map(|v| v.trim().to_string())
+            .filter(|v| !v.is_empty())
+    }
+}
+
+fn insert_json_string_if_present(
+    form: &mut serde_json::Map<String, Value>,
+    source: &serde_yaml::Mapping,
+    yaml_key: &str,
+    json_key: &str,
+) {
+    if let Some(value) = yaml_string_field(source, yaml_key) {
+        form.insert(json_key.to_string(), Value::String(value));
+    }
+}
+
+fn insert_json_bool_if_present(
+    form: &mut serde_json::Map<String, Value>,
+    source: &serde_yaml::Mapping,
+    yaml_key: &str,
+    json_key: &str,
+) {
+    if let Some(value) = yaml_bool_field(source, yaml_key) {
+        form.insert(json_key.to_string(), Value::Bool(value));
+    }
+}
+
+fn insert_json_csv_if_present(
+    form: &mut serde_json::Map<String, Value>,
+    source: &serde_yaml::Mapping,
+    yaml_key: &str,
+    json_key: &str,
+) {
+    if let Some(value) = yaml_csv_field(source, yaml_key) {
+        form.insert(json_key.to_string(), Value::String(value));
+    }
+}
+
+fn build_hermes_channel_config_values(config: &serde_yaml::Value) -> Value {
+    let mut values = serde_json::Map::new();
+    let root = config.as_mapping();
+    let platforms = root.and_then(|map| yaml_get_mapping(map, "platforms"));
+
+    for platform in HERMES_CHANNEL_PLATFORMS {
+        let entry = platforms
+            .and_then(|map| yaml_get_mapping(map, platform))
+            .cloned()
+            .unwrap_or_default();
+        let extra = yaml_get_mapping(&entry, "extra")
+            .cloned()
+            .unwrap_or_default();
+        let mut form = serde_json::Map::new();
+        form.insert(
+            "enabled".to_string(),
+            Value::Bool(yaml_bool_field(&entry, "enabled").unwrap_or(false)),
+        );
+
+        match platform {
+            "telegram" => {
+                form.insert(
+                    "botToken".to_string(),
+                    Value::String(yaml_string_field(&entry, "token").unwrap_or_default()),
+                );
+            }
+            "discord" => {
+                form.insert(
+                    "token".to_string(),
+                    Value::String(yaml_string_field(&entry, "token").unwrap_or_default()),
+                );
+            }
+            "slack" => {
+                form.insert(
+                    "botToken".to_string(),
+                    Value::String(yaml_string_field(&entry, "token").unwrap_or_default()),
+                );
+                insert_json_string_if_present(&mut form, &extra, "app_token", "appToken");
+                insert_json_string_if_present(&mut form, &extra, "signing_secret", "signingSecret");
+                insert_json_string_if_present(&mut form, &extra, "webhook_path", "webhookPath");
+            }
+            "feishu" => {
+                insert_json_string_if_present(&mut form, &extra, "app_id", "appId");
+                insert_json_string_if_present(&mut form, &extra, "app_secret", "appSecret");
+                insert_json_string_if_present(&mut form, &extra, "domain", "domain");
+                insert_json_string_if_present(
+                    &mut form,
+                    &extra,
+                    "connection_mode",
+                    "connectionMode",
+                );
+                insert_json_string_if_present(&mut form, &extra, "webhook_path", "webhookPath");
+                insert_json_string_if_present(
+                    &mut form,
+                    &extra,
+                    "reaction_notifications",
+                    "reactionNotifications",
+                );
+                insert_json_bool_if_present(
+                    &mut form,
+                    &extra,
+                    "typing_indicator",
+                    "typingIndicator",
+                );
+                insert_json_bool_if_present(
+                    &mut form,
+                    &extra,
+                    "resolve_sender_names",
+                    "resolveSenderNames",
+                );
+            }
+            _ => {}
+        }
+
+        insert_json_string_if_present(&mut form, &extra, "dm_policy", "dmPolicy");
+        insert_json_string_if_present(&mut form, &extra, "group_policy", "groupPolicy");
+        insert_json_bool_if_present(&mut form, &extra, "require_mention", "requireMention");
+        insert_json_csv_if_present(&mut form, &extra, "allow_from", "allowFrom");
+        insert_json_csv_if_present(&mut form, &extra, "group_allow_from", "groupAllowFrom");
+        values.insert(platform.to_string(), Value::Object(form));
+    }
+
+    Value::Object(values)
+}
+
+fn ensure_yaml_object(value: &mut serde_yaml::Value) -> Result<&mut serde_yaml::Mapping, String> {
+    if value.is_null() {
+        *value = serde_yaml::Value::Mapping(serde_yaml::Mapping::new());
+    }
+    value
+        .as_mapping_mut()
+        .ok_or_else(|| "config.yaml 顶层必须是对象".to_string())
+}
+
+fn yaml_child_object<'a>(
+    parent: &'a mut serde_yaml::Mapping,
+    key: &str,
+) -> Result<&'a mut serde_yaml::Mapping, String> {
+    let key_value = yaml_key(key);
+    if !parent
+        .get(&key_value)
+        .map(|value| value.is_mapping())
+        .unwrap_or(false)
+    {
+        parent.insert(
+            key_value.clone(),
+            serde_yaml::Value::Mapping(serde_yaml::Mapping::new()),
+        );
+    }
+    parent
+        .get_mut(&key_value)
+        .and_then(|value| value.as_mapping_mut())
+        .ok_or_else(|| format!("{key} 必须是对象"))
+}
+
+fn set_yaml_string_if_present(entry: &mut serde_yaml::Mapping, key: &str, value: Option<String>) {
+    if let Some(value) = value {
+        entry.insert(
+            yaml_key(key),
+            serde_yaml::Value::String(value.trim().to_string()),
+        );
+    }
+}
+
+fn set_extra_string_if_present(entry: &mut serde_yaml::Mapping, key: &str, value: Option<String>) {
+    if let Some(value) = value
+        .map(|v| v.trim().to_string())
+        .filter(|v| !v.is_empty())
+    {
+        if let Ok(extra) = yaml_child_object(entry, "extra") {
+            extra.insert(yaml_key(key), serde_yaml::Value::String(value));
+        }
+    }
+}
+
+fn set_extra_bool(entry: &mut serde_yaml::Mapping, key: &str, value: bool) {
+    if let Ok(extra) = yaml_child_object(entry, "extra") {
+        extra.insert(yaml_key(key), serde_yaml::Value::Bool(value));
+    }
+}
+
+fn set_extra_string_array(entry: &mut serde_yaml::Mapping, key: &str, values: Vec<String>) {
+    if let Ok(extra) = yaml_child_object(entry, "extra") {
+        extra.insert(
+            yaml_key(key),
+            serde_yaml::Value::Sequence(
+                values
+                    .into_iter()
+                    .map(serde_yaml::Value::String)
+                    .collect::<Vec<_>>(),
+            ),
+        );
+    }
+}
+
+fn form_string(form: &Value, key: &str) -> Option<String> {
+    form.get(key)
+        .and_then(|v| v.as_str())
+        .map(|v| v.to_string())
+}
+
+fn form_string_or_default(form: &Value, key: &str, default_value: &str) -> String {
+    form_string(form, key)
+        .map(|value| value.trim().to_string())
+        .filter(|value| !value.is_empty())
+        .unwrap_or_else(|| default_value.to_string())
+}
+
+fn form_bool(form: &Value, key: &str) -> Option<bool> {
+    form.get(key).and_then(|value| {
+        if let Some(b) = value.as_bool() {
+            Some(b)
+        } else {
+            value.as_str().map(|s| {
+                matches!(
+                    s.trim().to_ascii_lowercase().as_str(),
+                    "true" | "on" | "1" | "yes"
+                )
+            })
+        }
+    })
+}
+
+fn form_string_array(form: &Value, key: &str) -> Option<Vec<String>> {
+    let value = form.get(key)?;
+    let items = if let Some(values) = value.as_array() {
+        values
+            .iter()
+            .filter_map(|item| item.as_str())
+            .flat_map(split_csv_items)
+            .collect()
+    } else if let Some(value) = value.as_str() {
+        split_csv_items(value)
+    } else {
+        Vec::new()
+    };
+    Some(items)
+}
+
+fn split_csv_items(value: &str) -> Vec<String> {
+    value
+        .split([',', ';', '\n'])
+        .map(str::trim)
+        .filter(|item| !item.is_empty())
+        .map(ToString::to_string)
+        .collect()
+}
+
+fn normalize_hermes_dm_policy(value: Option<String>) -> String {
+    let value = value.unwrap_or_default().trim().to_ascii_lowercase();
+    match value.as_str() {
+        "pairing" => "pair".to_string(),
+        "allow" => "open".to_string(),
+        "deny" => "disabled".to_string(),
+        "pair" | "open" | "allowlist" | "disabled" => value,
+        _ => "pair".to_string(),
+    }
+}
+
+fn normalize_hermes_group_policy(value: Option<String>) -> String {
+    let value = value.unwrap_or_default().trim().to_ascii_lowercase();
+    match value.as_str() {
+        "all" | "mentioned" => "open".to_string(),
+        "deny" => "disabled".to_string(),
+        "open" | "allowlist" | "disabled" => value,
+        _ => "allowlist".to_string(),
+    }
+}
+
+fn merge_hermes_channel_config(
+    config: &mut serde_yaml::Value,
+    platform: &str,
+    form: &Value,
+) -> Result<(), String> {
+    let platform = normalize_hermes_channel_platform(platform)
+        .ok_or_else(|| format!("不支持的 Hermes 渠道: {platform}"))?;
+    let root = ensure_yaml_object(config)?;
+    let platforms = yaml_child_object(root, "platforms")?;
+    let entry = yaml_child_object(platforms, platform)?;
+
+    entry.insert(
+        yaml_key("enabled"),
+        serde_yaml::Value::Bool(form_bool(form, "enabled").unwrap_or(false)),
+    );
+
+    match platform {
+        "telegram" => set_yaml_string_if_present(entry, "token", form_string(form, "botToken")),
+        "discord" => set_yaml_string_if_present(entry, "token", form_string(form, "token")),
+        "slack" => {
+            set_yaml_string_if_present(entry, "token", form_string(form, "botToken"));
+            set_extra_string_if_present(entry, "app_token", form_string(form, "appToken"));
+            set_extra_string_if_present(
+                entry,
+                "signing_secret",
+                form_string(form, "signingSecret"),
+            );
+            set_extra_string_if_present(
+                entry,
+                "webhook_path",
+                Some(form_string_or_default(form, "webhookPath", "/slack/events")),
+            );
+        }
+        "feishu" => {
+            set_extra_string_if_present(entry, "app_id", form_string(form, "appId"));
+            set_extra_string_if_present(entry, "app_secret", form_string(form, "appSecret"));
+            set_extra_string_if_present(
+                entry,
+                "domain",
+                Some(form_string_or_default(form, "domain", "feishu")),
+            );
+            set_extra_string_if_present(
+                entry,
+                "connection_mode",
+                Some(form_string_or_default(form, "connectionMode", "websocket")),
+            );
+            set_extra_string_if_present(
+                entry,
+                "webhook_path",
+                Some(form_string_or_default(
+                    form,
+                    "webhookPath",
+                    "/feishu/webhook",
+                )),
+            );
+            set_extra_string_if_present(
+                entry,
+                "reaction_notifications",
+                Some(form_string_or_default(form, "reactionNotifications", "off")),
+            );
+            set_extra_bool(
+                entry,
+                "typing_indicator",
+                form_bool(form, "typingIndicator").unwrap_or(true),
+            );
+            set_extra_bool(
+                entry,
+                "resolve_sender_names",
+                form_bool(form, "resolveSenderNames").unwrap_or(true),
+            );
+        }
+        _ => {}
+    }
+
+    if form.get("dmPolicy").is_some() {
+        set_extra_string_if_present(
+            entry,
+            "dm_policy",
+            Some(normalize_hermes_dm_policy(form_string(form, "dmPolicy"))),
+        );
+    }
+    if form.get("groupPolicy").is_some() {
+        let group_policy = normalize_hermes_group_policy(form_string(form, "groupPolicy"));
+        set_extra_string_if_present(entry, "group_policy", Some(group_policy.clone()));
+        if platform == "feishu" {
+            set_extra_string_if_present(entry, "default_group_policy", Some(group_policy));
+        }
+    }
+    if let Some(value) = form_bool(form, "requireMention") {
+        set_extra_bool(entry, "require_mention", value);
+    }
+    if let Some(values) = form_string_array(form, "allowFrom") {
+        set_extra_string_array(entry, "allow_from", values);
+    }
+    if let Some(values) = form_string_array(form, "groupAllowFrom") {
+        set_extra_string_array(entry, "group_allow_from", values);
+    }
+
+    Ok(())
+}
+
+fn read_hermes_channel_yaml_config() -> Result<(PathBuf, bool, serde_yaml::Value), String> {
+    let config_path = hermes_home().join("config.yaml");
+    if !config_path.exists() {
+        return Ok((
+            config_path,
+            false,
+            serde_yaml::Value::Mapping(serde_yaml::Mapping::new()),
+        ));
+    }
+    let raw =
+        std::fs::read_to_string(&config_path).map_err(|e| format!("读取 config.yaml 失败: {e}"))?;
+    let config = if raw.trim().is_empty() {
+        serde_yaml::Value::Mapping(serde_yaml::Mapping::new())
+    } else {
+        serde_yaml::from_str(&raw).map_err(|e| format!("解析 config.yaml 失败: {e}"))?
+    };
+    Ok((config_path, true, config))
+}
+
+fn write_hermes_yaml_config(path: &PathBuf, config: &serde_yaml::Value) -> Result<(), String> {
+    if let Some(parent) = path.parent() {
+        std::fs::create_dir_all(parent).map_err(|e| format!("创建 Hermes 配置目录失败: {e}"))?;
+    }
+    if path.exists() {
+        let ts = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_secs())
+            .unwrap_or(0);
+        let backup = path.with_extension(format!("yaml.bak-{ts}"));
+        let _ = std::fs::copy(path, backup);
+    }
+    let yaml =
+        serde_yaml::to_string(config).map_err(|e| format!("序列化 config.yaml 失败: {e}"))?;
+    std::fs::write(path, yaml).map_err(|e| format!("写入 config.yaml 失败: {e}"))
+}
+
+fn csv_env_value(form: &Value, key: &str) -> String {
+    form_string_array(form, key).unwrap_or_default().join(",")
+}
+
+fn bool_env_value(value: bool) -> String {
+    if value { "true" } else { "false" }.to_string()
+}
+
+fn build_hermes_channel_env_updates(platform: &str, form: &Value) -> Vec<(String, String)> {
+    let mut pairs = Vec::new();
+    let mut push = |key: &str, value: String| {
+        let value = value.trim().to_string();
+        if !value.is_empty() {
+            pairs.push((key.to_string(), value));
+        }
+    };
+
+    match platform {
+        "telegram" => {
+            push(
+                "TELEGRAM_BOT_TOKEN",
+                form_string(form, "botToken").unwrap_or_default(),
+            );
+            push("TELEGRAM_ALLOWED_USERS", csv_env_value(form, "allowFrom"));
+            push(
+                "TELEGRAM_GROUP_ALLOWED_USERS",
+                csv_env_value(form, "groupAllowFrom"),
+            );
+            if let Some(value) = form_bool(form, "requireMention") {
+                push("TELEGRAM_REQUIRE_MENTION", bool_env_value(value));
+            }
+        }
+        "discord" => {
+            push(
+                "DISCORD_BOT_TOKEN",
+                form_string(form, "token").unwrap_or_default(),
+            );
+            push("DISCORD_ALLOWED_USERS", csv_env_value(form, "allowFrom"));
+            if let Some(value) = form_bool(form, "requireMention") {
+                push("DISCORD_REQUIRE_MENTION", bool_env_value(value));
+            }
+        }
+        "slack" => {
+            push(
+                "SLACK_BOT_TOKEN",
+                form_string(form, "botToken").unwrap_or_default(),
+            );
+            push(
+                "SLACK_APP_TOKEN",
+                form_string(form, "appToken").unwrap_or_default(),
+            );
+            push("SLACK_ALLOWED_USERS", csv_env_value(form, "allowFrom"));
+            if let Some(value) = form_bool(form, "requireMention") {
+                push("SLACK_REQUIRE_MENTION", bool_env_value(value));
+            }
+        }
+        "feishu" => {
+            push(
+                "FEISHU_APP_ID",
+                form_string(form, "appId").unwrap_or_default(),
+            );
+            push(
+                "FEISHU_APP_SECRET",
+                form_string(form, "appSecret").unwrap_or_default(),
+            );
+            push(
+                "FEISHU_DOMAIN",
+                form_string_or_default(form, "domain", "feishu"),
+            );
+            push(
+                "FEISHU_CONNECTION_MODE",
+                form_string_or_default(form, "connectionMode", "websocket"),
+            );
+            push(
+                "FEISHU_WEBHOOK_PATH",
+                form_string_or_default(form, "webhookPath", "/feishu/webhook"),
+            );
+            push("FEISHU_ALLOWED_USERS", csv_env_value(form, "allowFrom"));
+            push(
+                "FEISHU_GROUP_POLICY",
+                normalize_hermes_group_policy(form_string(form, "groupPolicy")),
+            );
+            push(
+                "FEISHU_REQUIRE_MENTION",
+                bool_env_value(form_bool(form, "requireMention").unwrap_or(true)),
+            );
+            let reactions = form_string(form, "reactionNotifications").unwrap_or_default();
+            push(
+                "FEISHU_REACTIONS",
+                if reactions.trim() == "off" {
+                    "false"
+                } else {
+                    "true"
+                }
+                .to_string(),
+            );
+        }
+        _ => {}
+    }
+
+    pairs
+}
+
+fn write_hermes_channel_env(platform: &str, form: &Value) -> Result<(), String> {
+    let env_path = hermes_home().join(".env");
+    if let Some(parent) = env_path.parent() {
+        std::fs::create_dir_all(parent).map_err(|e| format!("创建 Hermes 配置目录失败: {e}"))?;
+    }
+    let raw = std::fs::read_to_string(&env_path).unwrap_or_default();
+    let managed_keys: Vec<&str> = match platform {
+        "telegram" => vec![
+            "TELEGRAM_BOT_TOKEN",
+            "TELEGRAM_ALLOWED_USERS",
+            "TELEGRAM_GROUP_ALLOWED_USERS",
+            "TELEGRAM_REQUIRE_MENTION",
+        ],
+        "discord" => vec![
+            "DISCORD_BOT_TOKEN",
+            "DISCORD_ALLOWED_USERS",
+            "DISCORD_REQUIRE_MENTION",
+        ],
+        "slack" => vec![
+            "SLACK_BOT_TOKEN",
+            "SLACK_APP_TOKEN",
+            "SLACK_ALLOWED_USERS",
+            "SLACK_REQUIRE_MENTION",
+        ],
+        "feishu" => vec![
+            "FEISHU_APP_ID",
+            "FEISHU_APP_SECRET",
+            "FEISHU_DOMAIN",
+            "FEISHU_CONNECTION_MODE",
+            "FEISHU_WEBHOOK_PATH",
+            "FEISHU_ALLOWED_USERS",
+            "FEISHU_GROUP_POLICY",
+            "FEISHU_REQUIRE_MENTION",
+            "FEISHU_REACTIONS",
+        ],
+        _ => Vec::new(),
+    };
+    let pairs = build_hermes_channel_env_updates(platform, form);
+    let content = merge_env_file(&raw, &managed_keys, &pairs);
+    std::fs::write(&env_path, content).map_err(|e| format!("写入 .env 失败: {e}"))
+}
+
+#[tauri::command]
+pub fn hermes_channel_config_read() -> Result<Value, String> {
+    let (config_path, exists, config) = read_hermes_channel_yaml_config()?;
+    ensure_yaml_object(&mut config.clone())?;
+    Ok(serde_json::json!({
+        "exists": exists,
+        "configPath": config_path.to_string_lossy(),
+        "values": build_hermes_channel_config_values(&config),
+    }))
+}
+
+#[tauri::command]
+pub fn hermes_channel_config_save(platform: String, form: Value) -> Result<Value, String> {
+    let platform = normalize_hermes_channel_platform(&platform)
+        .ok_or_else(|| format!("不支持的 Hermes 渠道: {}", platform.trim()))?;
+    let (config_path, _exists, mut config) = read_hermes_channel_yaml_config()?;
+    merge_hermes_channel_config(&mut config, platform, &form)?;
+    write_hermes_yaml_config(&config_path, &config)?;
+    write_hermes_channel_env(platform, &form)?;
+    let values = build_hermes_channel_config_values(&config);
+    Ok(serde_json::json!({
+        "ok": true,
+        "configPath": config_path.to_string_lossy(),
+        "values": values.get(platform).cloned().unwrap_or(Value::Null),
+    }))
+}
+
+// ---------------------------------------------------------------------------
 // hermes_read_config — 读取 Hermes config.yaml + .env
 // ---------------------------------------------------------------------------
 
@@ -7001,5 +7634,115 @@ platforms:
             !patched.contains("enabled: false"),
             "disabled marker should have been removed"
         );
+    }
+}
+
+#[cfg(test)]
+mod hermes_channel_tests {
+    use super::{
+        build_hermes_channel_config_values, build_hermes_channel_env_updates,
+        merge_hermes_channel_config,
+    };
+    use serde_json::json;
+
+    #[test]
+    fn merge_telegram_channel_keeps_unknown_extra_fields() {
+        let mut config: serde_yaml::Value = serde_yaml::from_str(
+            r#"
+model:
+  provider: anthropic
+  default: claude-sonnet-4-6
+platforms:
+  telegram:
+    enabled: false
+    token: old
+    extra:
+      unknown_option: keep-me
+"#,
+        )
+        .unwrap();
+
+        merge_hermes_channel_config(
+            &mut config,
+            "telegram",
+            &json!({
+                "enabled": true,
+                "botToken": "123:token",
+                "dmPolicy": "pair",
+                "groupPolicy": "allowlist",
+                "allowFrom": "1001, 1002",
+                "requireMention": true,
+            }),
+        )
+        .unwrap();
+
+        let values = build_hermes_channel_config_values(&config);
+        assert_eq!(values["telegram"]["enabled"], true);
+        assert_eq!(values["telegram"]["botToken"], "123:token");
+        assert_eq!(values["telegram"]["allowFrom"], "1001, 1002");
+        assert_eq!(
+            config["platforms"]["telegram"]["extra"]["unknown_option"].as_str(),
+            Some("keep-me")
+        );
+    }
+
+    #[test]
+    fn merge_feishu_channel_fills_runtime_defaults() {
+        let mut config = serde_yaml::Value::Mapping(serde_yaml::Mapping::new());
+
+        merge_hermes_channel_config(
+            &mut config,
+            "feishu",
+            &json!({
+                "enabled": true,
+                "appId": "cli_xxx",
+                "appSecret": "secret",
+                "domain": "",
+                "connectionMode": "",
+                "webhookPath": "",
+                "reactionNotifications": "",
+                "typingIndicator": true,
+                "resolveSenderNames": true,
+            }),
+        )
+        .unwrap();
+
+        assert_eq!(
+            config["platforms"]["feishu"]["extra"]["domain"].as_str(),
+            Some("feishu")
+        );
+        assert_eq!(
+            config["platforms"]["feishu"]["extra"]["connection_mode"].as_str(),
+            Some("websocket")
+        );
+        assert_eq!(
+            config["platforms"]["feishu"]["extra"]["webhook_path"].as_str(),
+            Some("/feishu/webhook")
+        );
+        assert_eq!(
+            config["platforms"]["feishu"]["extra"]["reaction_notifications"].as_str(),
+            Some("off")
+        );
+
+        let env = build_hermes_channel_env_updates(
+            "feishu",
+            &json!({
+                "appId": "cli_xxx",
+                "appSecret": "secret",
+                "domain": "",
+                "connectionMode": "",
+                "webhookPath": "",
+                "groupPolicy": "allowlist",
+            }),
+        );
+        assert!(env.contains(&("FEISHU_DOMAIN".to_string(), "feishu".to_string())));
+        assert!(env.contains(&(
+            "FEISHU_CONNECTION_MODE".to_string(),
+            "websocket".to_string()
+        )));
+        assert!(env.contains(&(
+            "FEISHU_WEBHOOK_PATH".to_string(),
+            "/feishu/webhook".to_string()
+        )));
     }
 }
