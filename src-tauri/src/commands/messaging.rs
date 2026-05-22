@@ -334,7 +334,10 @@ fn channel_any_credential_groups(
 }
 
 fn channel_diagnosis_credentials_ready(platform: &str, form: &Map<String, Value>) -> bool {
-    if matches!(platform_storage_key(platform), "zalouser" | "imessage") {
+    if matches!(
+        platform_storage_key(platform),
+        "zalouser" | "imessage" | "whatsapp"
+    ) {
         return true;
     }
     if platform_storage_key(platform) == "msteams" {
@@ -465,7 +468,7 @@ fn build_openclaw_channel_diagnosis(
             .iter()
             .any(|(key, _)| has_configured_messaging_value(form.get(*key)))
     };
-    let credential_ok = if matches!(storage_key, "zalouser" | "imessage") {
+    let credential_ok = if matches!(storage_key, "zalouser" | "imessage" | "whatsapp") {
         config_exists
     } else if !required_fields.is_empty() {
         missing.is_empty()
@@ -485,6 +488,8 @@ fn build_openclaw_channel_diagnosis(
             "登录/会话配置"
         } else if storage_key == "imessage" {
             "桥接运行配置"
+        } else if storage_key == "whatsapp" {
+            "扫码/会话配置"
         } else {
             "必要凭证字段"
         },
@@ -495,6 +500,12 @@ fn build_openclaw_channel_diagnosis(
                 "iMessage 使用本机或远端桥接运行，不需要 Bot Token；已保存基础运行配置。".to_string()
             } else {
                 "尚未保存 iMessage 渠道配置，请先填写并保存。".to_string()
+            }
+        } else if storage_key == "whatsapp" {
+            if config_exists {
+                "WhatsApp 使用扫码登录保存本地会话，不需要 Bot Token；已保存扫码运行配置。".to_string()
+            } else {
+                "尚未保存 WhatsApp 渠道配置，请先填写并保存，再启动扫码登录。".to_string()
             }
         } else if credential_ok {
             if !required_fields.is_empty() {
@@ -889,6 +900,7 @@ fn normalize_messaging_platform_form(
     normalize_numeric_form_value(&mut normalized, "dmHistoryLimit");
     normalize_numeric_form_value(&mut normalized, "textChunkLimit");
     normalize_numeric_form_value(&mut normalized, "probeTimeoutMs");
+    normalize_numeric_form_value(&mut normalized, "debounceMs");
     normalize_numeric_form_value(&mut normalized, "rateLimitPerMinute");
     normalize_numeric_form_value(&mut normalized, "httpPort");
     normalize_numeric_form_value(&mut normalized, "webhookPort");
@@ -911,6 +923,7 @@ fn normalize_messaging_platform_form(
         "dangerouslyAllowPrivateNetwork",
         "dangerouslyAllowInheritedWebhookPath",
         "allowInsecureSsl",
+        "enabled",
         "allowBots",
         "blockStreaming",
         "useManagedIdentity",
@@ -925,6 +938,8 @@ fn normalize_messaging_platform_form(
         "includeAttachments",
         "sendReadReceipts",
         "coalesceSameSenderDms",
+        "selfChatMode",
+        "ackDirect",
     ] {
         if normalized.contains_key(key) {
             let value = match normalized.get(key) {
@@ -1512,7 +1527,50 @@ pub async fn read_platform_config(
         }
         "whatsapp" => {
             insert_access_policy_form_values(&mut form, &saved, false, false);
+            insert_array_as_csv(&mut form, &saved, "groupAllowFrom");
             insert_bool_as_string(&mut form, &saved, "enabled");
+            for key in [
+                "configWrites",
+                "sendReadReceipts",
+                "selfChatMode",
+                "blockStreaming",
+            ] {
+                insert_bool_as_string(&mut form, &saved, key);
+            }
+            for key in [
+                "defaultTo",
+                "contextVisibility",
+                "chunkMode",
+                "reactionLevel",
+                "replyToMode",
+                "messagePrefix",
+                "responsePrefix",
+            ] {
+                insert_string_if_present(&mut form, &saved, key);
+            }
+            for key in [
+                "historyLimit",
+                "dmHistoryLimit",
+                "mediaMaxMb",
+                "debounceMs",
+                "textChunkLimit",
+            ] {
+                insert_number_as_string(&mut form, &saved, key);
+            }
+            if let Some(ack_reaction) = saved.get("ackReaction") {
+                if let Some(v) = ack_reaction.get("emoji").and_then(|v| v.as_str()) {
+                    form.insert("ackEmoji".into(), Value::String(v.into()));
+                }
+                if let Some(v) = ack_reaction.get("direct").and_then(|v| v.as_bool()) {
+                    form.insert(
+                        "ackDirect".into(),
+                        Value::String(if v { "true" } else { "false" }.into()),
+                    );
+                }
+                if let Some(v) = ack_reaction.get("group").and_then(|v| v.as_str()) {
+                    form.insert("ackGroup".into(), Value::String(v.into()));
+                }
+            }
         }
         "signal" => {
             insert_string_if_present(&mut form, &saved, "account");
@@ -2261,6 +2319,18 @@ pub async fn save_messaging_platform(
         "whatsapp" => {
             let mut entry = Map::new();
             entry.insert("enabled".into(), Value::Bool(true));
+            put_bool_value_if_present(&mut entry, "enabled", form_obj.get("enabled"));
+            for key in [
+                "defaultTo",
+                "contextVisibility",
+                "chunkMode",
+                "reactionLevel",
+                "replyToMode",
+                "messagePrefix",
+                "responsePrefix",
+            ] {
+                put_string(&mut entry, key, form_string(form_obj, key));
+            }
             put_string(&mut entry, "dmPolicy", form_string(form_obj, "dmPolicy"));
             put_string(
                 &mut entry,
@@ -2268,13 +2338,50 @@ pub async fn save_messaging_platform(
                 form_string(form_obj, "groupPolicy"),
             );
             put_array_from_form_value(&mut entry, "allowFrom", form_obj.get("allowFrom"));
-            put_bool_from_form(&mut entry, "enabled", &form_string(form_obj, "enabled"));
+            put_array_from_form_value(&mut entry, "groupAllowFrom", form_obj.get("groupAllowFrom"));
+            for key in [
+                "configWrites",
+                "sendReadReceipts",
+                "selfChatMode",
+                "blockStreaming",
+            ] {
+                put_bool_value_if_present(&mut entry, key, form_obj.get(key));
+            }
+            for key in [
+                "historyLimit",
+                "dmHistoryLimit",
+                "mediaMaxMb",
+                "debounceMs",
+                "textChunkLimit",
+            ] {
+                put_number_value_if_present(&mut entry, key, form_obj.get(key));
+            }
+            let mut ack_reaction = current_saved
+                .get("ackReaction")
+                .and_then(|v| v.as_object())
+                .cloned()
+                .unwrap_or_default();
+            put_string(
+                &mut ack_reaction,
+                "emoji",
+                form_string(form_obj, "ackEmoji"),
+            );
+            put_bool_value_if_present(&mut ack_reaction, "direct", form_obj.get("ackDirect"));
+            put_string(
+                &mut ack_reaction,
+                "group",
+                form_string(form_obj, "ackGroup"),
+            );
+            if !ack_reaction.is_empty() {
+                entry.insert("ackReaction".into(), Value::Object(ack_reaction));
+            }
             merge_channel_entry_for_account(
                 channels_map,
                 &storage_key,
                 account_id.as_deref(),
                 entry,
             )?;
+            ensure_plugin_allowed(&mut cfg, "whatsapp")?;
         }
         "signal" => {
             let account = form_string(form_obj, "account");
@@ -5957,6 +6064,83 @@ mod tests {
                 .and_then(|item| item.get("title"))
                 .and_then(|v| v.as_str()),
             Some("桥接运行配置")
+        );
+    }
+
+    #[test]
+    fn normalize_whatsapp_form_preserves_scan_runtime_fields() {
+        let form = json!({
+            "enabled": "true",
+            "configWrites": "true",
+            "sendReadReceipts": "false",
+            "selfChatMode": "true",
+            "dmPolicy": "allowlist",
+            "allowFrom": "+15551234567, +15557654321",
+            "groupPolicy": "allowlist",
+            "groupAllowFrom": "120363@g.us, 120364@g.us",
+            "debounceMs": "800",
+            "mediaMaxMb": "50",
+            "ackDirect": "true",
+            "ackGroup": "mentions"
+        });
+        let normalized =
+            normalize_messaging_platform_form("whatsapp", form.as_object().expect("object"));
+
+        assert_eq!(
+            normalized.get("enabled").and_then(|v| v.as_bool()),
+            Some(true)
+        );
+        assert_eq!(
+            normalized.get("configWrites").and_then(|v| v.as_bool()),
+            Some(true)
+        );
+        assert_eq!(
+            normalized.get("sendReadReceipts").and_then(|v| v.as_bool()),
+            Some(false)
+        );
+        assert_eq!(
+            normalized.get("selfChatMode").and_then(|v| v.as_bool()),
+            Some(true)
+        );
+        assert_eq!(
+            normalized.get("debounceMs").and_then(|v| v.as_f64()),
+            Some(800.0)
+        );
+        assert_eq!(
+            normalized.get("mediaMaxMb").and_then(|v| v.as_f64()),
+            Some(50.0)
+        );
+        assert_eq!(
+            normalized.get("ackDirect").and_then(|v| v.as_bool()),
+            Some(true)
+        );
+        assert_eq!(
+            normalized
+                .get("allowFrom")
+                .and_then(|v| v.as_array())
+                .map(|items| items.len()),
+            Some(2)
+        );
+        assert_eq!(
+            normalized
+                .get("groupAllowFrom")
+                .and_then(|v| v.as_array())
+                .map(|items| items.len()),
+            Some(2)
+        );
+        assert!(channel_diagnosis_credentials_ready("whatsapp", &normalized));
+        let diagnosis =
+            build_openclaw_channel_diagnosis("whatsapp", None, true, true, &normalized, None, None);
+        assert_eq!(
+            diagnosis
+                .get("checks")
+                .and_then(|v| v.as_array())
+                .and_then(|items| items
+                    .iter()
+                    .find(|item| item.get("id").and_then(|v| v.as_str()) == Some("credentials")))
+                .and_then(|item| item.get("title"))
+                .and_then(|v| v.as_str()),
+            Some("扫码/会话配置")
         );
     }
 

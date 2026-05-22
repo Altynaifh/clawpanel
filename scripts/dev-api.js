@@ -2476,7 +2476,7 @@ export function normalizeMessagingPlatformForm(platform, form = {}) {
     if (Object.hasOwn(normalized, key)) normalized[key] = csvToStringArray(normalized[key])
   }
 
-  for (const key of ['mediaMaxMb', 'historyLimit', 'dmHistoryLimit', 'textChunkLimit', 'probeTimeoutMs', 'rateLimitPerMinute', 'httpPort', 'webhookPort', 'feedbackReflectionCooldownMs']) {
+  for (const key of ['mediaMaxMb', 'historyLimit', 'dmHistoryLimit', 'textChunkLimit', 'probeTimeoutMs', 'debounceMs', 'rateLimitPerMinute', 'httpPort', 'webhookPort', 'feedbackReflectionCooldownMs']) {
     if (!Object.hasOwn(normalized, key)) continue
     const value = String(normalized[key] || '').trim()
     if (!value) {
@@ -2489,7 +2489,7 @@ export function normalizeMessagingPlatformForm(platform, form = {}) {
     }
   }
 
-  for (const key of ['dangerouslyAllowNameMatching', 'dangerouslyAllowPrivateNetwork', 'dangerouslyAllowInheritedWebhookPath', 'allowInsecureSsl', 'allowBots', 'blockStreaming', 'useManagedIdentity', 'typingIndicator', 'welcomeCard', 'groupWelcomeCard', 'feedbackEnabled', 'feedbackReflection', 'delegatedAuthEnabled', 'ssoEnabled', 'configWrites', 'includeAttachments', 'sendReadReceipts', 'coalesceSameSenderDms']) {
+  for (const key of ['dangerouslyAllowNameMatching', 'dangerouslyAllowPrivateNetwork', 'dangerouslyAllowInheritedWebhookPath', 'allowInsecureSsl', 'allowBots', 'blockStreaming', 'useManagedIdentity', 'typingIndicator', 'welcomeCard', 'groupWelcomeCard', 'feedbackEnabled', 'feedbackReflection', 'delegatedAuthEnabled', 'ssoEnabled', 'configWrites', 'includeAttachments', 'sendReadReceipts', 'coalesceSameSenderDms', 'selfChatMode', 'ackDirect']) {
     if (Object.hasOwn(normalized, key)) {
       const value = String(normalized[key] || '').trim()
       if (!value) {
@@ -2705,7 +2705,7 @@ function requiredChannelCredentialFields(platform, form = {}) {
 }
 
 function channelDiagnosisCredentialsReady(platform, form = {}) {
-  if (platformStorageKey(platform) === 'zalouser') return true
+  if (['zalouser', 'whatsapp'].includes(platformStorageKey(platform))) return true
   if (platformStorageKey(platform) === 'msteams') return msteamsCredentialMissingLabels(form).length === 0
   const requiredFields = requiredChannelCredentialFields(platform, form)
   if (requiredFields.length) {
@@ -2770,7 +2770,7 @@ export function buildOpenClawChannelDiagnosis({
     .map(group => group.label)
   const hasAnyCredential = channelRootHasMessagingCredential(form)
   const anyCredentialOk = anyFields.length ? anyFields.some(([key]) => hasConfiguredMessagingValue(form?.[key])) : false
-  const credentialOk = ['zalouser', 'imessage'].includes(storageKey)
+  const credentialOk = ['zalouser', 'imessage', 'whatsapp'].includes(storageKey)
     ? !!configExists
     : (requiredFields.length
         ? missing.length === 0
@@ -2781,13 +2781,21 @@ export function buildOpenClawChannelDiagnosis({
   checks.push({
     id: 'credentials',
     ok: credentialOk,
-    title: storageKey === 'zalouser' ? '登录/会话配置' : (storageKey === 'imessage' ? '桥接运行配置' : '必要凭证字段'),
+    title: storageKey === 'zalouser'
+      ? '登录/会话配置'
+      : (storageKey === 'imessage'
+          ? '桥接运行配置'
+          : (storageKey === 'whatsapp' ? '扫码/会话配置' : '必要凭证字段')),
     detail: storageKey === 'zalouser'
       ? 'Zalo Personal 通过二维码登录保存本地会话；配置已保存后，请按手动命令完成或刷新登录。'
       : storageKey === 'imessage'
         ? (configExists
             ? 'iMessage 使用本机或远端桥接运行，不需要 Bot Token；已保存基础运行配置。'
             : '尚未保存 iMessage 渠道配置，请先填写并保存。')
+      : storageKey === 'whatsapp'
+        ? (configExists
+            ? 'WhatsApp 通过扫码登录保存本地会话，不需要 Bot Token；请使用扫码登录完成设备连接。'
+            : '尚未保存 WhatsApp 渠道配置，请先填写并保存。')
       : (credentialOk
           ? (requiredFields.length
               ? `已填写 ${requiredFields.map(([, label]) => label).join(' / ')}。`
@@ -2917,8 +2925,35 @@ export function buildMessagingPlatformFormValues(platform, saved = {}, options =
   }
 
   if (storageKey === 'whatsapp') {
-    putAccessPolicyFormValues(form, saved, { mentionCompat: true })
+    putAccessPolicyFormValues(form, saved)
+    putCsvFormValue(form, saved, 'groupAllowFrom')
     putBoolFormValue(form, saved, 'enabled')
+    for (const key of ['configWrites', 'sendReadReceipts', 'selfChatMode', 'blockStreaming']) {
+      putBoolFormValue(form, saved, key)
+    }
+    for (const key of ['defaultTo', 'contextVisibility', 'chunkMode', 'reactionLevel', 'replyToMode', 'messagePrefix', 'responsePrefix']) {
+      putStringFormValue(form, saved, key)
+    }
+    for (const key of ['historyLimit', 'dmHistoryLimit', 'mediaMaxMb', 'debounceMs', 'textChunkLimit']) {
+      if (typeof saved[key] === 'number') form[key] = String(saved[key])
+    }
+    if (saved?.ackReaction && typeof saved.ackReaction === 'object') {
+      putStringFormValue(form, saved.ackReaction, 'emoji')
+      if (form.emoji) {
+        form.ackEmoji = form.emoji
+        delete form.emoji
+      }
+      putBoolFormValue(form, saved.ackReaction, 'direct')
+      if (form.direct) {
+        form.ackDirect = form.direct
+        delete form.direct
+      }
+      putStringFormValue(form, saved.ackReaction, 'group')
+      if (form.group) {
+        form.ackGroup = form.group
+        delete form.group
+      }
+    }
     return form
   }
 
@@ -3653,6 +3688,26 @@ function buildOpenClawMessagingPlatformEntry(platform, form, currentSaved = {}) 
     if (Array.isArray(form.allowFrom) && form.allowFrom.length) entry.allowFrom = form.allowFrom
     if (Array.isArray(form.groupAllowFrom) && form.groupAllowFrom.length) entry.groupAllowFrom = form.groupAllowFrom
     if (typeof form.mediaMaxMb === 'number') entry.mediaMaxMb = form.mediaMaxMb
+  } else if (storageKey === 'whatsapp') {
+    entry.enabled = typeof form.enabled === 'boolean' ? form.enabled : true
+    for (const key of ['defaultTo', 'contextVisibility', 'chunkMode', 'reactionLevel', 'replyToMode', 'messagePrefix', 'responsePrefix']) {
+      if (form[key]) entry[key] = form[key]
+    }
+    entry.dmPolicy = form.dmPolicy
+    entry.groupPolicy = form.groupPolicy
+    if (Array.isArray(form.allowFrom) && form.allowFrom.length) entry.allowFrom = form.allowFrom
+    if (Array.isArray(form.groupAllowFrom) && form.groupAllowFrom.length) entry.groupAllowFrom = form.groupAllowFrom
+    for (const key of ['configWrites', 'sendReadReceipts', 'selfChatMode', 'blockStreaming']) {
+      if (typeof form[key] === 'boolean') entry[key] = form[key]
+    }
+    for (const key of ['historyLimit', 'dmHistoryLimit', 'mediaMaxMb', 'debounceMs', 'textChunkLimit']) {
+      if (typeof form[key] === 'number') entry[key] = form[key]
+    }
+    const ackReaction = { ...(currentSaved?.ackReaction && typeof currentSaved.ackReaction === 'object' ? currentSaved.ackReaction : {}) }
+    if (form.ackEmoji) ackReaction.emoji = form.ackEmoji
+    if (typeof form.ackDirect === 'boolean') ackReaction.direct = form.ackDirect
+    if (form.ackGroup) ackReaction.group = form.ackGroup
+    if (Object.keys(ackReaction).length) entry.ackReaction = ackReaction
   } else if (storageKey === 'signal') {
     for (const key of ['account', 'cliPath', 'httpUrl', 'httpHost', 'responsePrefix']) {
       if (form[key]) entry[key] = form[key]
@@ -3786,7 +3841,7 @@ export function mergeOpenClawMessagingPlatformConfig(cfg, { platform, form, acco
   const currentSaved = resolvePlatformConfigEntry(cfg.channels?.[storageKey], platform, normalizedAccountId) || {}
   const entry = buildOpenClawMessagingPlatformEntry(platform, normalizedForm, currentSaved)
   applyMessagingPlatformEntry(cfg, storageKey, normalizedAccountId, entry)
-  if (['zalo', 'zalouser', 'line', 'mattermost', 'synology-chat', 'googlechat', 'msteams', 'imessage'].includes(storageKey)) {
+  if (['zalo', 'zalouser', 'line', 'mattermost', 'synology-chat', 'googlechat', 'msteams', 'imessage', 'whatsapp'].includes(storageKey)) {
     ensureMessagingPluginAllowed(cfg, storageKey)
   }
   return { entry, accountId: normalizedAccountId, storageKey }
@@ -5256,7 +5311,7 @@ const handlers = {
       } else {
         setRootChannelEntry(entry)
       }
-    } else if (['line', 'mattermost', 'synology-chat', 'googlechat', 'msteams'].includes(storageKey)) {
+    } else if (['line', 'mattermost', 'synology-chat', 'googlechat', 'msteams', 'whatsapp'].includes(storageKey)) {
       const built = buildOpenClawMessagingPlatformEntry(platform, form, currentSaved)
       applyMessagingPlatformEntry(cfg, storageKey, normalizedAccountId, built)
       ensureMessagingPluginAllowed(cfg, storageKey)
@@ -5265,7 +5320,7 @@ const handlers = {
       preserveMessagingCredentialRefs(entry, form, currentSaved)
     }
 
-    if (platform !== 'qqbot' && platform !== 'feishu' && platform !== 'dingtalk' && platform !== 'dingtalk-connector' && !['line', 'mattermost', 'synology-chat', 'googlechat', 'msteams'].includes(storageKey)) {
+    if (platform !== 'qqbot' && platform !== 'feishu' && platform !== 'dingtalk' && platform !== 'dingtalk-connector' && !['line', 'mattermost', 'synology-chat', 'googlechat', 'msteams', 'whatsapp'].includes(storageKey)) {
       preserveMessagingCredentialRefs(entry, form, currentSaved)
       // 合并模式：保留用户通过 CLI 或手动编辑的自定义字段
       applyMessagingPlatformEntry(cfg, storageKey, normalizedAccountId, entry)
@@ -5386,6 +5441,9 @@ const handlers = {
     }
     if (platform === 'zalouser') {
       return { valid: true, warnings: ['Zalo Personal 通过二维码登录维护本地会话；请使用 openclaw channels status --probe 检查登录状态'] }
+    }
+    if (platform === 'whatsapp') {
+      return { valid: true, warnings: ['WhatsApp 使用扫码登录维护本地会话，无需在线校验 Bot Token；请通过「启动扫码登录」完成配对。'] }
     }
     if (platform === 'discord') {
       try {

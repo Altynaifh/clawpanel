@@ -7,8 +7,15 @@ const channelsPageSource = readFileSync(new URL('../src/pages/channels.js', impo
 function getRegistryBlock(platformId) {
   const start = channelsPageSource.indexOf(`  ${platformId}: {`)
   assert.notEqual(start, -1, `未找到 ${platformId} 渠道注册表`)
-  const next = channelsPageSource.indexOf('\n  slack: {', start + 1)
-  return channelsPageSource.slice(start, next === -1 ? undefined : next)
+  const braceStart = channelsPageSource.indexOf('{', start)
+  let depth = 0
+  for (let index = braceStart; index < channelsPageSource.length; index += 1) {
+    const char = channelsPageSource[index]
+    if (char === '{') depth += 1
+    if (char === '}') depth -= 1
+    if (depth === 0) return channelsPageSource.slice(start, index + 1)
+  }
+  assert.fail(`未找到 ${platformId} 渠道注册表结束位置`)
 }
 
 test('Discord 渠道 UI 会暴露服务器频道 allowlist 配置字段', () => {
@@ -38,4 +45,24 @@ test('iMessage 渠道 UI 会暴露桥接运行配置字段', () => {
   }
   assert.match(imessageBlock, /pluginRequired:\s*'@openclaw\/imessage@latest'/)
   assert.match(imessageBlock, /pluginId:\s*'imessage'/)
+})
+
+test('WhatsApp 渠道 UI 会恢复扫码登录和运行配置入口', () => {
+  const whatsappBlock = getRegistryBlock('whatsapp')
+
+  for (const field of [
+    'selfChatMode',
+    'allowFrom',
+    'groupAllowFrom',
+    'debounceMs',
+    'mediaMaxMb',
+    'sendReadReceipts',
+    'ackEmoji',
+    'ackGroup',
+  ]) {
+    assert.match(whatsappBlock, new RegExp(`key:\\s*'${field}'`))
+  }
+  assert.match(whatsappBlock, /id:\s*'login'/)
+  assert.match(whatsappBlock, /pluginRequired:\s*'@openclaw\/whatsapp@latest'/)
+  assert.match(whatsappBlock, /pluginId:\s*'whatsapp'/)
 })
