@@ -3666,6 +3666,21 @@ function normalizeHermesMultilineList(value) {
     .filter(Boolean)
 }
 
+function normalizeHermesToolsetList(value, fieldName = 'agent.disabled_toolsets') {
+  const seen = new Set()
+  const normalized = []
+  for (const item of normalizeHermesMultilineList(value)) {
+    if (!/^[a-zA-Z0-9_.-]+$/.test(item)) {
+      throw new Error(`${fieldName} 只能包含字母、数字、下划线、点和短横线`)
+    }
+    if (!seen.has(item)) {
+      seen.add(item)
+      normalized.push(item)
+    }
+  }
+  return normalized
+}
+
 export function buildHermesSkillsConfigValues(config = {}) {
   const root = config && typeof config === 'object' && !Array.isArray(config) ? config : {}
   const skills = root.skills && typeof root.skills === 'object' && !Array.isArray(root.skills)
@@ -3691,6 +3706,30 @@ export function mergeHermesSkillsConfig(config = {}, form = {}) {
   if (externalDirs.length) skills.external_dirs = externalDirs
   else delete skills.external_dirs
   next.skills = skills
+  return next
+}
+
+export function buildHermesAgentToolsetsConfigValues(config = {}) {
+  const root = config && typeof config === 'object' && !Array.isArray(config) ? config : {}
+  const agent = root.agent && typeof root.agent === 'object' && !Array.isArray(root.agent)
+    ? root.agent
+    : {}
+  const disabledToolsets = Array.isArray(agent.disabled_toolsets)
+    ? normalizeHermesMultilineList(agent.disabled_toolsets).join('\n')
+    : ''
+  return {
+    disabledToolsets,
+  }
+}
+
+export function mergeHermesAgentToolsetsConfig(config = {}, form = {}) {
+  const next = mergeConfigsPreservingFields({}, config && typeof config === 'object' && !Array.isArray(config) ? config : {})
+  const currentValues = buildHermesAgentToolsetsConfigValues(next)
+  const agent = next.agent && typeof next.agent === 'object' && !Array.isArray(next.agent)
+    ? mergeConfigsPreservingFields(next.agent, {})
+    : {}
+  agent.disabled_toolsets = normalizeHermesToolsetList(Object.hasOwn(form, 'disabledToolsets') ? form.disabledToolsets : currentValues.disabledToolsets)
+  next.agent = agent
   return next
 }
 
@@ -10430,6 +10469,27 @@ const handlers = {
       configPath,
       backup,
       values: buildHermesQuickCommandsConfigValues(next),
+    }
+  },
+
+  hermes_agent_toolsets_config_read() {
+    const { configPath, exists, config } = readHermesConfigYamlObject()
+    return {
+      exists,
+      configPath,
+      values: buildHermesAgentToolsetsConfigValues(config),
+    }
+  },
+
+  hermes_agent_toolsets_config_save({ form } = {}) {
+    const { configPath, config } = readHermesConfigYamlObject()
+    const next = mergeHermesAgentToolsetsConfig(config, form || {})
+    const backup = writeHermesConfigYamlObject(configPath, next)
+    return {
+      ok: true,
+      configPath,
+      backup,
+      values: buildHermesAgentToolsetsConfigValues(next),
     }
   },
 

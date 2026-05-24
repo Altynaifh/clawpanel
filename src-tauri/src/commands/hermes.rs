@@ -3856,6 +3856,62 @@ fn merge_hermes_quick_commands_config(
     Ok(())
 }
 
+fn normalize_hermes_toolset_list(raw: Option<String>) -> Result<Vec<String>, String> {
+    let mut normalized = Vec::new();
+    for item in normalize_hermes_multiline_list(raw) {
+        if !item
+            .chars()
+            .all(|ch| ch.is_ascii_alphanumeric() || matches!(ch, '_' | '.' | '-'))
+        {
+            return Err(
+                "agent.disabled_toolsets 只能包含字母、数字、下划线、点和短横线".to_string(),
+            );
+        }
+        if !normalized.iter().any(|existing| existing == &item) {
+            normalized.push(item);
+        }
+    }
+    Ok(normalized)
+}
+
+fn build_hermes_agent_toolsets_config_values(config: &serde_yaml::Value) -> Value {
+    let root = config.as_mapping();
+    let disabled_toolsets = root
+        .and_then(|map| yaml_get_mapping(map, "agent"))
+        .map(|map| yaml_string_sequence_field(map, "disabled_toolsets").join("\n"))
+        .unwrap_or_default();
+
+    serde_json::json!({
+        "disabledToolsets": disabled_toolsets,
+    })
+}
+
+fn merge_hermes_agent_toolsets_config(
+    config: &mut serde_yaml::Value,
+    form: &Value,
+) -> Result<(), String> {
+    let current = build_hermes_agent_toolsets_config_values(config);
+    let disabled_toolsets =
+        normalize_hermes_toolset_list(form_string(form, "disabledToolsets").or_else(|| {
+            current["disabledToolsets"]
+                .as_str()
+                .map(ToString::to_string)
+        }))?;
+
+    let root = ensure_yaml_object(config)?;
+    let agent = yaml_child_object(root, "agent")?;
+    agent.insert(
+        yaml_key("disabled_toolsets"),
+        serde_yaml::Value::Sequence(
+            disabled_toolsets
+                .into_iter()
+                .map(serde_yaml::Value::String)
+                .collect(),
+        ),
+    );
+    Ok(())
+}
+
 fn normalize_hermes_unauthorized_dm_behavior(
     value: Option<String>,
     strict: bool,
@@ -6066,6 +6122,30 @@ pub fn hermes_quick_commands_config_save(form: Value) -> Result<Value, String> {
         "configPath": config_path.to_string_lossy(),
         "backup": backup,
         "values": build_hermes_quick_commands_config_values(&config),
+    }))
+}
+
+#[tauri::command]
+pub fn hermes_agent_toolsets_config_read() -> Result<Value, String> {
+    let (config_path, exists, config) = read_hermes_channel_yaml_config()?;
+    ensure_yaml_object(&mut config.clone())?;
+    Ok(serde_json::json!({
+        "exists": exists,
+        "configPath": config_path.to_string_lossy(),
+        "values": build_hermes_agent_toolsets_config_values(&config),
+    }))
+}
+
+#[tauri::command]
+pub fn hermes_agent_toolsets_config_save(form: Value) -> Result<Value, String> {
+    let (config_path, _exists, mut config) = read_hermes_channel_yaml_config()?;
+    merge_hermes_agent_toolsets_config(&mut config, &form)?;
+    let backup = write_hermes_yaml_config(&config_path, &config)?;
+    Ok(serde_json::json!({
+        "ok": true,
+        "configPath": config_path.to_string_lossy(),
+        "backup": backup,
+        "values": build_hermes_agent_toolsets_config_values(&config),
     }))
 }
 
@@ -12512,6 +12592,118 @@ streaming:
         )
         .unwrap_err();
         assert!(err.contains("quick_commands.restart.target"));
+    }
+}
+
+#[cfg(test)]
+mod hermes_agent_toolsets_config_tests {
+    use super::{build_hermes_agent_toolsets_config_values, merge_hermes_agent_toolsets_config};
+    use serde_json::json;
+
+    #[test]
+    fn agent_toolsets_values_have_empty_defaults() {
+        let config: serde_yaml::Value = serde_yaml::from_str("{}").unwrap();
+        let values = build_hermes_agent_toolsets_config_values(&config);
+        assert_eq!(values["disabledToolsets"], "");
+    }
+
+    #[test]
+    fn agent_toolsets_values_read_yaml_sequence() {
+        let config: serde_yaml::Value = serde_yaml::from_str(
+            r#"
+agent:
+  disabled_toolsets:
+    - memory
+    - web
+    - browser
+"#,
+        )
+        .unwrap();
+
+        let values = build_hermes_agent_toolsets_config_values(&config);
+        assert_eq!(values["disabledToolsets"], "memory\nweb\nbrowser");
+    }
+
+    #[test]
+    fn merge_agent_toolsets_config_preserves_unrelated_yaml() {
+        let mut config: serde_yaml::Value = serde_yaml::from_str(
+            r#"
+model:
+  provider: anthropic
+agent:
+  disabled_toolsets:
+    - memory
+  max_turns: 80
+  custom_flag: keep-agent
+streaming:
+  enabled: true
+"#,
+        )
+        .unwrap();
+
+        merge_hermes_agent_toolsets_config(
+            &mut config,
+            &json!({
+                "disabledToolsets": " terminal \n browser \n\n memory\nbrowser ",
+            }),
+        )
+        .unwrap();
+
+        assert_eq!(config["model"]["provider"].as_str(), Some("anthropic"));
+        assert_eq!(config["streaming"]["enabled"].as_bool(), Some(true));
+        assert_eq!(
+            config["agent"]["disabled_toolsets"][0].as_str(),
+            Some("terminal")
+        );
+        assert_eq!(
+            config["agent"]["disabled_toolsets"][1].as_str(),
+            Some("browser")
+        );
+        assert_eq!(
+            config["agent"]["disabled_toolsets"][2].as_str(),
+            Some("memory")
+        );
+        assert_eq!(config["agent"]["max_turns"].as_i64(), Some(80));
+        assert_eq!(config["agent"]["custom_flag"].as_str(), Some("keep-agent"));
+    }
+
+    #[test]
+    fn merge_agent_toolsets_config_writes_empty_sequence() {
+        let mut config: serde_yaml::Value = serde_yaml::from_str(
+            r#"
+agent:
+  disabled_toolsets:
+    - memory
+  custom_flag: keep-agent
+"#,
+        )
+        .unwrap();
+
+        merge_hermes_agent_toolsets_config(&mut config, &json!({ "disabledToolsets": "  \n " }))
+            .unwrap();
+
+        assert!(config["agent"]["disabled_toolsets"]
+            .as_sequence()
+            .unwrap()
+            .is_empty());
+        assert_eq!(config["agent"]["custom_flag"].as_str(), Some("keep-agent"));
+    }
+
+    #[test]
+    fn merge_agent_toolsets_config_rejects_invalid_values() {
+        let mut config = serde_yaml::Value::Mapping(serde_yaml::Mapping::new());
+        let err = merge_hermes_agent_toolsets_config(
+            &mut config,
+            &json!({ "disabledToolsets": "bad tool" }),
+        )
+        .unwrap_err();
+        assert!(err.contains("agent.disabled_toolsets"));
+        let err = merge_hermes_agent_toolsets_config(
+            &mut config,
+            &json!({ "disabledToolsets": "../secret" }),
+        )
+        .unwrap_err();
+        assert!(err.contains("agent.disabled_toolsets"));
     }
 }
 

@@ -58,6 +58,15 @@ test('Hermes 配置页会暴露快捷命令结构化配置字段', () => {
   }
 })
 
+test('Hermes 配置页会暴露全局禁用工具集结构化配置字段', () => {
+  for (const id of [
+    'hm-agent-toolsets-save',
+    'hm-agent-disabled-toolsets',
+  ]) {
+    assert.match(source, new RegExp(`id="${id}"`), `缺少 ${id}`)
+  }
+})
+
 test('Hermes 配置页会暴露未授权 DM 全局策略字段', () => {
   for (const id of [
     'hm-unauthorized-dm-save',
@@ -199,6 +208,7 @@ test('Hermes 配置页新增结构化配置不会暴露翻译 key', () => {
     key.includes('MemoryConfig') ||
     key.includes('SkillsConfig') ||
     key.includes('QuickCommandsConfig') ||
+    key.includes('AgentToolsetsConfig') ||
     key.includes('UnauthorizedDmConfig') ||
     key.includes('SecurityConfig') ||
     key.includes('HumanDelayConfig') ||
