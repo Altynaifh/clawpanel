@@ -3453,6 +3453,35 @@ export function mergeHermesToolLoopGuardrailsConfig(config = {}, form = {}) {
   return next
 }
 
+export function buildHermesMemoryConfigValues(config = {}) {
+  const root = config && typeof config === 'object' && !Array.isArray(config) ? config : {}
+  const memory = root.memory && typeof root.memory === 'object' && !Array.isArray(root.memory)
+    ? root.memory
+    : {}
+  return {
+    memoryEnabled: readHermesBool(memory.memory_enabled, true),
+    userProfileEnabled: readHermesBool(memory.user_profile_enabled, true),
+    memoryCharLimit: parseHermesInteger(memory.memory_char_limit, 'memory.memory_char_limit', 2200, 100, 200000, false),
+    userCharLimit: parseHermesInteger(memory.user_char_limit, 'memory.user_char_limit', 1375, 100, 200000, false),
+    nudgeInterval: parseHermesInteger(memory.nudge_interval, 'memory.nudge_interval', 10, 0, 1000, false),
+  }
+}
+
+export function mergeHermesMemoryConfig(config = {}, form = {}) {
+  const next = mergeConfigsPreservingFields({}, config && typeof config === 'object' && !Array.isArray(config) ? config : {})
+  const currentValues = buildHermesMemoryConfigValues(next)
+  const memory = next.memory && typeof next.memory === 'object' && !Array.isArray(next.memory)
+    ? mergeConfigsPreservingFields(next.memory, {})
+    : {}
+  memory.memory_enabled = formHermesBool(form, 'memoryEnabled', currentValues.memoryEnabled)
+  memory.user_profile_enabled = formHermesBool(form, 'userProfileEnabled', currentValues.userProfileEnabled)
+  memory.memory_char_limit = parseHermesInteger(Object.hasOwn(form, 'memoryCharLimit') ? form.memoryCharLimit : currentValues.memoryCharLimit, 'memory.memory_char_limit', 2200, 100, 200000, true)
+  memory.user_char_limit = parseHermesInteger(Object.hasOwn(form, 'userCharLimit') ? form.userCharLimit : currentValues.userCharLimit, 'memory.user_char_limit', 1375, 100, 200000, true)
+  memory.nudge_interval = parseHermesInteger(Object.hasOwn(form, 'nudgeInterval') ? form.nudgeInterval : currentValues.nudgeInterval, 'memory.nudge_interval', 10, 0, 1000, true)
+  next.memory = memory
+  return next
+}
+
 export function buildHermesSessionRuntimeConfigValues(config = {}) {
   const root = config && typeof config === 'object' && !Array.isArray(config) ? config : {}
   const sessionReset = root.session_reset && typeof root.session_reset === 'object' && !Array.isArray(root.session_reset)
@@ -9714,6 +9743,27 @@ const handlers = {
       configPath,
       backup,
       values: buildHermesToolLoopGuardrailsConfigValues(next),
+    }
+  },
+
+  hermes_memory_config_read() {
+    const { configPath, exists, config } = readHermesConfigYamlObject()
+    return {
+      exists,
+      configPath,
+      values: buildHermesMemoryConfigValues(config),
+    }
+  },
+
+  hermes_memory_config_save({ form } = {}) {
+    const { configPath, config } = readHermesConfigYamlObject()
+    const next = mergeHermesMemoryConfig(config, form || {})
+    const backup = writeHermesConfigYamlObject(configPath, next)
+    return {
+      ok: true,
+      configPath,
+      backup,
+      values: buildHermesMemoryConfigValues(next),
     }
   },
 

@@ -25,10 +25,27 @@ test('Hermes 配置页会暴露工具循环防护结构化配置字段', () => {
   }
 })
 
-test('Hermes 配置页新增结构化配置不会暴露翻译 key', () => {
-  const keys = new Set(extractEngineKeys().filter(key => key.includes('ToolGuardrails')))
+test('Hermes 配置页会暴露记忆结构化配置字段', () => {
+  for (const id of [
+    'hm-memory-save',
+    'hm-memory-enabled',
+    'hm-memory-user-profile-enabled',
+    'hm-memory-char-limit',
+    'hm-memory-user-char-limit',
+    'hm-memory-nudge-interval',
+  ]) {
+    assert.match(source, new RegExp(`id="${id}"`), `缺少 ${id}`)
+  }
+})
 
-  assert.ok(keys.size > 0, '应能提取工具循环防护用到的 engine 翻译 key')
+test('Hermes 配置页数值输入会保留 0 值显示', () => {
+  assert.doesNotMatch(source, /String\(value \|\| ''\)/, 'esc(value) 不能把合法 0 渲染为空字符串')
+})
+
+test('Hermes 配置页新增结构化配置不会暴露翻译 key', () => {
+  const keys = new Set(extractEngineKeys().filter(key => key.includes('ToolGuardrails') || key.includes('MemoryConfig')))
+
+  assert.ok(keys.size > 0, '应能提取新增结构化配置用到的 engine 翻译 key')
   for (const key of keys) {
     assert.notEqual(t(key), key, `${key} 缺少运行时翻译`)
   }

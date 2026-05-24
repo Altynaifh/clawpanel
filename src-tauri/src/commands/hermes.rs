@@ -3321,6 +3321,99 @@ fn merge_hermes_tool_loop_guardrails_config(
     Ok(())
 }
 
+fn build_hermes_memory_config_values(config: &serde_yaml::Value) -> Value {
+    let root = config.as_mapping();
+    let memory = root.and_then(|map| yaml_get_mapping(map, "memory"));
+    let memory_enabled = memory
+        .and_then(|map| yaml_bool_field(map, "memory_enabled"))
+        .unwrap_or(true);
+    let user_profile_enabled = memory
+        .and_then(|map| yaml_bool_field(map, "user_profile_enabled"))
+        .unwrap_or(true);
+    let memory_char_limit = memory
+        .map(|map| bounded_hermes_i64(yaml_i64_field(map, "memory_char_limit"), 2200, 100, 200000))
+        .unwrap_or(2200);
+    let user_char_limit = memory
+        .map(|map| bounded_hermes_i64(yaml_i64_field(map, "user_char_limit"), 1375, 100, 200000))
+        .unwrap_or(1375);
+    let nudge_interval = memory
+        .map(|map| bounded_hermes_i64(yaml_i64_field(map, "nudge_interval"), 10, 0, 1000))
+        .unwrap_or(10);
+
+    serde_json::json!({
+        "memoryEnabled": memory_enabled,
+        "userProfileEnabled": user_profile_enabled,
+        "memoryCharLimit": memory_char_limit,
+        "userCharLimit": user_char_limit,
+        "nudgeInterval": nudge_interval,
+    })
+}
+
+fn merge_hermes_memory_config(config: &mut serde_yaml::Value, form: &Value) -> Result<(), String> {
+    let current = build_hermes_memory_config_values(config);
+    let memory_enabled = form_bool(form, "memoryEnabled")
+        .unwrap_or_else(|| current["memoryEnabled"].as_bool().unwrap_or(true));
+    let user_profile_enabled = form_bool(form, "userProfileEnabled")
+        .unwrap_or_else(|| current["userProfileEnabled"].as_bool().unwrap_or(true));
+    let memory_char_limit = validate_hermes_i64(
+        if form.get("memoryCharLimit").is_some() {
+            form_i64(form, "memoryCharLimit")
+        } else {
+            Some(current["memoryCharLimit"].as_i64().unwrap_or(2200))
+        },
+        "memory.memory_char_limit",
+        2200,
+        100,
+        200000,
+    )?;
+    let user_char_limit = validate_hermes_i64(
+        if form.get("userCharLimit").is_some() {
+            form_i64(form, "userCharLimit")
+        } else {
+            Some(current["userCharLimit"].as_i64().unwrap_or(1375))
+        },
+        "memory.user_char_limit",
+        1375,
+        100,
+        200000,
+    )?;
+    let nudge_interval = validate_hermes_i64(
+        if form.get("nudgeInterval").is_some() {
+            form_i64(form, "nudgeInterval")
+        } else {
+            Some(current["nudgeInterval"].as_i64().unwrap_or(10))
+        },
+        "memory.nudge_interval",
+        10,
+        0,
+        1000,
+    )?;
+
+    let root = ensure_yaml_object(config)?;
+    let memory = yaml_child_object(root, "memory")?;
+    memory.insert(
+        yaml_key("memory_enabled"),
+        serde_yaml::Value::Bool(memory_enabled),
+    );
+    memory.insert(
+        yaml_key("user_profile_enabled"),
+        serde_yaml::Value::Bool(user_profile_enabled),
+    );
+    memory.insert(
+        yaml_key("memory_char_limit"),
+        serde_yaml::Value::Number(memory_char_limit.into()),
+    );
+    memory.insert(
+        yaml_key("user_char_limit"),
+        serde_yaml::Value::Number(user_char_limit.into()),
+    );
+    memory.insert(
+        yaml_key("nudge_interval"),
+        serde_yaml::Value::Number(nudge_interval.into()),
+    );
+    Ok(())
+}
+
 fn build_hermes_session_runtime_config_values(config: &serde_yaml::Value) -> Value {
     let root = config.as_mapping();
     let session_reset = root.and_then(|map| yaml_get_mapping(map, "session_reset"));
@@ -4176,6 +4269,30 @@ pub fn hermes_tool_loop_guardrails_config_save(form: Value) -> Result<Value, Str
         "configPath": config_path.to_string_lossy(),
         "backup": backup,
         "values": build_hermes_tool_loop_guardrails_config_values(&config),
+    }))
+}
+
+#[tauri::command]
+pub fn hermes_memory_config_read() -> Result<Value, String> {
+    let (config_path, exists, config) = read_hermes_channel_yaml_config()?;
+    ensure_yaml_object(&mut config.clone())?;
+    Ok(serde_json::json!({
+        "exists": exists,
+        "configPath": config_path.to_string_lossy(),
+        "values": build_hermes_memory_config_values(&config),
+    }))
+}
+
+#[tauri::command]
+pub fn hermes_memory_config_save(form: Value) -> Result<Value, String> {
+    let (config_path, _exists, mut config) = read_hermes_channel_yaml_config()?;
+    merge_hermes_memory_config(&mut config, &form)?;
+    let backup = write_hermes_yaml_config(&config_path, &config)?;
+    Ok(serde_json::json!({
+        "ok": true,
+        "configPath": config_path.to_string_lossy(),
+        "backup": backup,
+        "values": build_hermes_memory_config_values(&config),
     }))
 }
 
@@ -9362,6 +9479,82 @@ streaming:
         )
         .unwrap_err();
         assert!(err.contains("tool_loop_guardrails.hard_stop_after.idempotent_no_progress"));
+    }
+}
+
+#[cfg(test)]
+mod hermes_memory_config_tests {
+    use super::{build_hermes_memory_config_values, merge_hermes_memory_config};
+    use serde_json::json;
+
+    #[test]
+    fn memory_values_have_upstream_defaults() {
+        let config: serde_yaml::Value = serde_yaml::from_str("{}").unwrap();
+        let values = build_hermes_memory_config_values(&config);
+        assert_eq!(values["memoryEnabled"], true);
+        assert_eq!(values["userProfileEnabled"], true);
+        assert_eq!(values["memoryCharLimit"], 2200);
+        assert_eq!(values["userCharLimit"], 1375);
+        assert_eq!(values["nudgeInterval"], 10);
+    }
+
+    #[test]
+    fn merge_memory_config_preserves_unrelated_yaml() {
+        let mut config: serde_yaml::Value = serde_yaml::from_str(
+            r#"
+model:
+  provider: anthropic
+memory:
+  memory_enabled: true
+  provider: honcho
+  custom_flag: keep-me
+streaming:
+  enabled: true
+"#,
+        )
+        .unwrap();
+
+        merge_hermes_memory_config(
+            &mut config,
+            &json!({
+                "memoryEnabled": false,
+                "userProfileEnabled": false,
+                "memoryCharLimit": "2600",
+                "userCharLimit": "1500",
+                "nudgeInterval": "0",
+            }),
+        )
+        .unwrap();
+
+        assert_eq!(config["model"]["provider"].as_str(), Some("anthropic"));
+        assert_eq!(config["streaming"]["enabled"].as_bool(), Some(true));
+        assert_eq!(config["memory"]["memory_enabled"].as_bool(), Some(false));
+        assert_eq!(
+            config["memory"]["user_profile_enabled"].as_bool(),
+            Some(false)
+        );
+        assert_eq!(config["memory"]["memory_char_limit"].as_i64(), Some(2600));
+        assert_eq!(config["memory"]["user_char_limit"].as_i64(), Some(1500));
+        assert_eq!(config["memory"]["nudge_interval"].as_i64(), Some(0));
+        assert_eq!(config["memory"]["provider"].as_str(), Some("honcho"));
+        assert_eq!(config["memory"]["custom_flag"].as_str(), Some("keep-me"));
+    }
+
+    #[test]
+    fn merge_memory_config_rejects_invalid_values() {
+        let mut config = serde_yaml::Value::Mapping(serde_yaml::Mapping::new());
+        let err =
+            merge_hermes_memory_config(&mut config, &json!({ "memoryCharLimit": 99 })).unwrap_err();
+        assert!(err.contains("memory.memory_char_limit"));
+        let err = merge_hermes_memory_config(&mut config, &json!({ "userCharLimit": 200001 }))
+            .unwrap_err();
+        assert!(err.contains("memory.user_char_limit"));
+        let err =
+            merge_hermes_memory_config(&mut config, &json!({ "nudgeInterval": -1 })).unwrap_err();
+        assert!(err.contains("memory.nudge_interval"));
+        let err =
+            merge_hermes_memory_config(&mut config, &json!({ "nudgeInterval": 1001 })).unwrap_err();
+        assert!(err.contains("memory.nudge_interval"));
     }
 }
 

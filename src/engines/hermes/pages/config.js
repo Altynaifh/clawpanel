@@ -34,6 +34,14 @@ const TOOL_GUARDRAILS_DEFAULTS = {
   hardStopNoProgress: 5,
 }
 
+const MEMORY_DEFAULTS = {
+  memoryEnabled: true,
+  userProfileEnabled: true,
+  memoryCharLimit: 2200,
+  userCharLimit: 1375,
+  nudgeInterval: 10,
+}
+
 const SESSION_RESET_MODES = ['both', 'idle', 'daily', 'none']
 
 export function render() {
@@ -44,21 +52,25 @@ export function render() {
   let runtimeValues = { ...SESSION_RUNTIME_DEFAULTS }
   let compressionValues = { ...COMPRESSION_DEFAULTS }
   let toolGuardrailsValues = { ...TOOL_GUARDRAILS_DEFAULTS }
+  let memoryValues = { ...MEMORY_DEFAULTS }
   let loading = true
   let runtimeLoading = true
   let compressionLoading = true
   let toolGuardrailsLoading = true
+  let memoryLoading = true
   let saving = false
   let runtimeSaving = false
   let compressionSaving = false
   let toolGuardrailsSaving = false
+  let memorySaving = false
   let error = null
   let runtimeError = null
   let compressionError = null
   let toolGuardrailsError = null
+  let memoryError = null
 
   function esc(value) {
-    return String(value || '')
+    return String(value ?? '')
       .replace(/&/g, '&amp;')
       .replace(/</g, '&lt;')
       .replace(/>/g, '&gt;')
@@ -66,7 +78,7 @@ export function render() {
   }
 
   function isBusy() {
-    return loading || runtimeLoading || compressionLoading || toolGuardrailsLoading || saving || runtimeSaving || compressionSaving || toolGuardrailsSaving
+    return loading || runtimeLoading || compressionLoading || toolGuardrailsLoading || memoryLoading || saving || runtimeSaving || compressionSaving || toolGuardrailsSaving || memorySaving
   }
 
   function option(labelKey, value, selected) {
@@ -83,7 +95,7 @@ export function render() {
   }
 
   function renderRuntimePanel() {
-    const disabled = loading || saving || runtimeLoading || runtimeSaving || compressionSaving || toolGuardrailsSaving
+    const disabled = loading || saving || runtimeLoading || runtimeSaving || compressionSaving || toolGuardrailsSaving || memorySaving
     return `
       <div class="hm-panel hm-config-runtime-panel">
         <div class="hm-panel-header">
@@ -131,7 +143,7 @@ export function render() {
   }
 
   function renderCompressionPanel() {
-    const disabled = loading || saving || compressionLoading || compressionSaving || runtimeSaving || toolGuardrailsSaving
+    const disabled = loading || saving || compressionLoading || compressionSaving || runtimeSaving || toolGuardrailsSaving || memorySaving
     return `
       <div class="hm-panel hm-config-runtime-panel hm-config-compression-panel">
         <div class="hm-panel-header">
@@ -181,7 +193,7 @@ export function render() {
   }
 
   function renderToolGuardrailsPanel() {
-    const disabled = loading || saving || toolGuardrailsLoading || toolGuardrailsSaving || runtimeSaving || compressionSaving
+    const disabled = loading || saving || toolGuardrailsLoading || toolGuardrailsSaving || runtimeSaving || compressionSaving || memorySaving
     return `
       <div class="hm-panel hm-config-runtime-panel hm-config-guardrails-panel">
         <div class="hm-panel-header">
@@ -242,6 +254,52 @@ export function render() {
     `
   }
 
+  function renderMemoryPanel() {
+    const disabled = loading || saving || memoryLoading || memorySaving || runtimeSaving || compressionSaving || toolGuardrailsSaving
+    return `
+      <div class="hm-panel hm-config-runtime-panel hm-config-memory-panel">
+        <div class="hm-panel-header">
+          <div>
+            <div class="hm-panel-title">${t('engine.hermesMemoryConfigTitle')}</div>
+            <div class="hm-channel-panel-desc">${t('engine.hermesMemoryConfigDesc')}</div>
+          </div>
+          <div class="hm-panel-actions">
+            <span class="hm-muted">${memorySaving ? t('engine.hermesConfigStatusSaving') : memoryLoading ? t('engine.hermesConfigStatusLoading') : t('engine.hermesMemoryConfigStatusReady')}</span>
+            <button class="hm-btn hm-btn--cta hm-btn--sm" id="hm-memory-save" ${disabled ? 'disabled' : ''}>${t('engine.hermesMemoryConfigSave')}</button>
+          </div>
+        </div>
+        <div class="hm-panel-body">
+          ${renderError(memoryError)}
+          <div class="hm-config-check-grid">
+            <label class="hm-channel-check">
+              <input id="hm-memory-enabled" type="checkbox" ${memoryValues.memoryEnabled ? 'checked' : ''} ${disabled ? 'disabled' : ''}>
+              <span>${t('engine.hermesMemoryConfigMemoryEnabled')}</span>
+            </label>
+            <label class="hm-channel-check">
+              <input id="hm-memory-user-profile-enabled" type="checkbox" ${memoryValues.userProfileEnabled ? 'checked' : ''} ${disabled ? 'disabled' : ''}>
+              <span>${t('engine.hermesMemoryConfigUserProfileEnabled')}</span>
+            </label>
+          </div>
+          <div class="hm-config-runtime-grid hm-config-memory-grid">
+            <label class="hm-field">
+              <span class="hm-field-label">${t('engine.hermesMemoryConfigMemoryCharLimit')}</span>
+              <input id="hm-memory-char-limit" class="hm-input" type="number" inputmode="numeric" min="100" max="200000" step="100" value="${esc(memoryValues.memoryCharLimit)}" ${disabled ? 'disabled' : ''}>
+            </label>
+            <label class="hm-field">
+              <span class="hm-field-label">${t('engine.hermesMemoryConfigUserCharLimit')}</span>
+              <input id="hm-memory-user-char-limit" class="hm-input" type="number" inputmode="numeric" min="100" max="200000" step="100" value="${esc(memoryValues.userCharLimit)}" ${disabled ? 'disabled' : ''}>
+            </label>
+            <label class="hm-field">
+              <span class="hm-field-label">${t('engine.hermesMemoryConfigNudgeInterval')}</span>
+              <input id="hm-memory-nudge-interval" class="hm-input" type="number" inputmode="numeric" min="0" max="1000" step="1" value="${esc(memoryValues.nudgeInterval)}" ${disabled ? 'disabled' : ''}>
+            </label>
+          </div>
+          <div class="hm-channel-footnote">${t('engine.hermesMemoryConfigFootnote')}</div>
+        </div>
+      </div>
+    `
+  }
+
   function draw() {
     el.innerHTML = `
       <div class="hm-hero">
@@ -259,6 +317,7 @@ export function render() {
       ${renderRuntimePanel()}
       ${renderCompressionPanel()}
       ${renderToolGuardrailsPanel()}
+      ${renderMemoryPanel()}
 
       <div class="hm-panel">
         <div class="hm-panel-header">
@@ -281,6 +340,7 @@ export function render() {
     el.querySelector('#hm-runtime-save')?.addEventListener('click', saveRuntime)
     el.querySelector('#hm-compression-save')?.addEventListener('click', saveCompression)
     el.querySelector('#hm-tool-guardrails-save')?.addEventListener('click', saveToolGuardrails)
+    el.querySelector('#hm-memory-save')?.addEventListener('click', saveMemory)
   }
 
   async function loadRaw() {
@@ -303,15 +363,22 @@ export function render() {
     toolGuardrailsValues = { ...TOOL_GUARDRAILS_DEFAULTS, ...(data?.values || {}) }
   }
 
+  async function loadMemory() {
+    const data = await api.hermesMemoryConfigRead()
+    memoryValues = { ...MEMORY_DEFAULTS, ...(data?.values || {}) }
+  }
+
   async function load() {
     loading = true
     runtimeLoading = true
     compressionLoading = true
     toolGuardrailsLoading = true
+    memoryLoading = true
     error = null
     runtimeError = null
     compressionError = null
     toolGuardrailsError = null
+    memoryError = null
     draw()
     try {
       await loadRaw()
@@ -344,6 +411,14 @@ export function render() {
       toolGuardrailsLoading = false
       draw()
     }
+    try {
+      await loadMemory()
+    } catch (err) {
+      memoryError = humanizeError(err, t('engine.hermesMemoryConfigLoadFailed') || 'Load memory config failed')
+    } finally {
+      memoryLoading = false
+      draw()
+    }
   }
 
   async function refreshRawAfterStructuredSave() {
@@ -373,6 +448,9 @@ export function render() {
       } catch {}
       try {
         await loadToolGuardrails()
+      } catch {}
+      try {
+        await loadMemory()
       } catch {}
     } catch (err) {
       error = humanizeError(err, t('engine.hermesConfigSaveFailed') || 'Save failed')
@@ -470,6 +548,35 @@ export function render() {
       toast(toolGuardrailsError, 'error')
     } finally {
       toolGuardrailsSaving = false
+      draw()
+    }
+  }
+
+  async function saveMemory() {
+    const form = {
+      memoryEnabled: !!el.querySelector('#hm-memory-enabled')?.checked,
+      userProfileEnabled: !!el.querySelector('#hm-memory-user-profile-enabled')?.checked,
+      memoryCharLimit: el.querySelector('#hm-memory-char-limit')?.value || '2200',
+      userCharLimit: el.querySelector('#hm-memory-user-char-limit')?.value || '1375',
+      nudgeInterval: el.querySelector('#hm-memory-nudge-interval')?.value || '10',
+    }
+    memorySaving = true
+    memoryError = null
+    draw()
+    try {
+      const result = await api.hermesMemoryConfigSave(form)
+      memoryValues = { ...MEMORY_DEFAULTS, ...(result?.values || form) }
+      await refreshRawAfterStructuredSave()
+      const backup = result?.backup || ''
+      toast({
+        message: t('engine.hermesMemoryConfigSaveSuccess'),
+        hint: backup ? t('engine.hermesConfigBackupHint', { path: backup }) : '',
+      }, 'success')
+    } catch (err) {
+      memoryError = humanizeError(err, t('engine.hermesMemoryConfigSaveFailed') || 'Save memory config failed')
+      toast(memoryError, 'error')
+    } finally {
+      memorySaving = false
       draw()
     }
   }
