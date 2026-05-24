@@ -3912,6 +3912,173 @@ fn merge_hermes_agent_toolsets_config(
     Ok(())
 }
 
+fn normalize_hermes_image_input_mode(
+    value: Option<String>,
+    strict: bool,
+) -> Result<String, String> {
+    let mode = value.unwrap_or_default().trim().to_ascii_lowercase();
+    let mode = if mode.is_empty() {
+        "auto".to_string()
+    } else {
+        mode
+    };
+    if matches!(mode.as_str(), "auto" | "native" | "text") {
+        return Ok(mode);
+    }
+    if strict {
+        Err("agent.image_input_mode 必须是 auto、native 或 text".to_string())
+    } else {
+        Ok("auto".to_string())
+    }
+}
+
+fn build_hermes_agent_runtime_config_values(config: &serde_yaml::Value) -> Value {
+    let root = config.as_mapping();
+    let agent = root.and_then(|map| yaml_get_mapping(map, "agent"));
+
+    let image_input_mode = normalize_hermes_image_input_mode(
+        agent.and_then(|map| yaml_string_field(map, "image_input_mode")),
+        false,
+    )
+    .unwrap_or_else(|_| "auto".to_string());
+
+    serde_json::json!({
+        "agentMaxTurns": agent.map(|map| bounded_hermes_i64(yaml_i64_field(map, "max_turns"), 90, 1, 10000)).unwrap_or(90),
+        "gatewayTimeout": agent.map(|map| bounded_hermes_i64(yaml_i64_field(map, "gateway_timeout"), 1800, 0, 604800)).unwrap_or(1800),
+        "restartDrainTimeout": agent.map(|map| bounded_hermes_i64(yaml_i64_field(map, "restart_drain_timeout"), 180, 0, 86400)).unwrap_or(180),
+        "apiMaxRetries": agent.map(|map| bounded_hermes_i64(yaml_i64_field(map, "api_max_retries"), 3, 1, 20)).unwrap_or(3),
+        "gatewayTimeoutWarning": agent.map(|map| bounded_hermes_i64(yaml_i64_field(map, "gateway_timeout_warning"), 900, 0, 604800)).unwrap_or(900),
+        "clarifyTimeout": agent.map(|map| bounded_hermes_i64(yaml_i64_field(map, "clarify_timeout"), 600, 0, 86400)).unwrap_or(600),
+        "gatewayNotifyInterval": agent.map(|map| bounded_hermes_i64(yaml_i64_field(map, "gateway_notify_interval"), 180, 0, 86400)).unwrap_or(180),
+        "gatewayAutoContinueFreshness": agent.map(|map| bounded_hermes_i64(yaml_i64_field(map, "gateway_auto_continue_freshness"), 3600, 0, 604800)).unwrap_or(3600),
+        "imageInputMode": image_input_mode,
+    })
+}
+
+fn agent_runtime_i64_value(
+    form: &Value,
+    current: &Value,
+    form_key: &str,
+    default_value: i64,
+) -> Option<i64> {
+    if form.get(form_key).is_some() {
+        form_i64(form, form_key)
+    } else {
+        Some(current[form_key].as_i64().unwrap_or(default_value))
+    }
+}
+
+fn merge_hermes_agent_runtime_config(
+    config: &mut serde_yaml::Value,
+    form: &Value,
+) -> Result<(), String> {
+    let current = build_hermes_agent_runtime_config_values(config);
+    let agent_max_turns = validate_hermes_i64(
+        agent_runtime_i64_value(form, &current, "agentMaxTurns", 90),
+        "agent.max_turns",
+        90,
+        1,
+        10000,
+    )?;
+    let gateway_timeout = validate_hermes_i64(
+        agent_runtime_i64_value(form, &current, "gatewayTimeout", 1800),
+        "agent.gateway_timeout",
+        1800,
+        0,
+        604800,
+    )?;
+    let restart_drain_timeout = validate_hermes_i64(
+        agent_runtime_i64_value(form, &current, "restartDrainTimeout", 180),
+        "agent.restart_drain_timeout",
+        180,
+        0,
+        86400,
+    )?;
+    let api_max_retries = validate_hermes_i64(
+        agent_runtime_i64_value(form, &current, "apiMaxRetries", 3),
+        "agent.api_max_retries",
+        3,
+        1,
+        20,
+    )?;
+    let gateway_timeout_warning = validate_hermes_i64(
+        agent_runtime_i64_value(form, &current, "gatewayTimeoutWarning", 900),
+        "agent.gateway_timeout_warning",
+        900,
+        0,
+        604800,
+    )?;
+    let clarify_timeout = validate_hermes_i64(
+        agent_runtime_i64_value(form, &current, "clarifyTimeout", 600),
+        "agent.clarify_timeout",
+        600,
+        0,
+        86400,
+    )?;
+    let gateway_notify_interval = validate_hermes_i64(
+        agent_runtime_i64_value(form, &current, "gatewayNotifyInterval", 180),
+        "agent.gateway_notify_interval",
+        180,
+        0,
+        86400,
+    )?;
+    let gateway_auto_continue_freshness = validate_hermes_i64(
+        agent_runtime_i64_value(form, &current, "gatewayAutoContinueFreshness", 3600),
+        "agent.gateway_auto_continue_freshness",
+        3600,
+        0,
+        604800,
+    )?;
+    let image_input_mode = normalize_hermes_image_input_mode(
+        if form.get("imageInputMode").is_some() {
+            form_string(form, "imageInputMode")
+        } else {
+            current["imageInputMode"].as_str().map(ToString::to_string)
+        },
+        true,
+    )?;
+
+    let root = ensure_yaml_object(config)?;
+    let agent = yaml_child_object(root, "agent")?;
+    agent.insert(
+        yaml_key("max_turns"),
+        serde_yaml::Value::Number(agent_max_turns.into()),
+    );
+    agent.insert(
+        yaml_key("gateway_timeout"),
+        serde_yaml::Value::Number(gateway_timeout.into()),
+    );
+    agent.insert(
+        yaml_key("restart_drain_timeout"),
+        serde_yaml::Value::Number(restart_drain_timeout.into()),
+    );
+    agent.insert(
+        yaml_key("api_max_retries"),
+        serde_yaml::Value::Number(api_max_retries.into()),
+    );
+    agent.insert(
+        yaml_key("gateway_timeout_warning"),
+        serde_yaml::Value::Number(gateway_timeout_warning.into()),
+    );
+    agent.insert(
+        yaml_key("clarify_timeout"),
+        serde_yaml::Value::Number(clarify_timeout.into()),
+    );
+    agent.insert(
+        yaml_key("gateway_notify_interval"),
+        serde_yaml::Value::Number(gateway_notify_interval.into()),
+    );
+    agent.insert(
+        yaml_key("gateway_auto_continue_freshness"),
+        serde_yaml::Value::Number(gateway_auto_continue_freshness.into()),
+    );
+    agent.insert(
+        yaml_key("image_input_mode"),
+        serde_yaml::Value::String(image_input_mode),
+    );
+    Ok(())
+}
+
 fn normalize_hermes_unauthorized_dm_behavior(
     value: Option<String>,
     strict: bool,
@@ -6146,6 +6313,30 @@ pub fn hermes_agent_toolsets_config_save(form: Value) -> Result<Value, String> {
         "configPath": config_path.to_string_lossy(),
         "backup": backup,
         "values": build_hermes_agent_toolsets_config_values(&config),
+    }))
+}
+
+#[tauri::command]
+pub fn hermes_agent_runtime_config_read() -> Result<Value, String> {
+    let (config_path, exists, config) = read_hermes_channel_yaml_config()?;
+    ensure_yaml_object(&mut config.clone())?;
+    Ok(serde_json::json!({
+        "exists": exists,
+        "configPath": config_path.to_string_lossy(),
+        "values": build_hermes_agent_runtime_config_values(&config),
+    }))
+}
+
+#[tauri::command]
+pub fn hermes_agent_runtime_config_save(form: Value) -> Result<Value, String> {
+    let (config_path, _exists, mut config) = read_hermes_channel_yaml_config()?;
+    merge_hermes_agent_runtime_config(&mut config, &form)?;
+    let backup = write_hermes_yaml_config(&config_path, &config)?;
+    Ok(serde_json::json!({
+        "ok": true,
+        "configPath": config_path.to_string_lossy(),
+        "backup": backup,
+        "values": build_hermes_agent_runtime_config_values(&config),
     }))
 }
 
@@ -12704,6 +12895,161 @@ agent:
         )
         .unwrap_err();
         assert!(err.contains("agent.disabled_toolsets"));
+    }
+}
+
+#[cfg(test)]
+mod hermes_agent_runtime_config_tests {
+    use super::{build_hermes_agent_runtime_config_values, merge_hermes_agent_runtime_config};
+    use serde_json::json;
+
+    #[test]
+    fn agent_runtime_values_have_upstream_defaults() {
+        let config: serde_yaml::Value = serde_yaml::from_str("{}").unwrap();
+        let values = build_hermes_agent_runtime_config_values(&config);
+        assert_eq!(values["agentMaxTurns"], 90);
+        assert_eq!(values["gatewayTimeout"], 1800);
+        assert_eq!(values["restartDrainTimeout"], 180);
+        assert_eq!(values["apiMaxRetries"], 3);
+        assert_eq!(values["gatewayTimeoutWarning"], 900);
+        assert_eq!(values["clarifyTimeout"], 600);
+        assert_eq!(values["gatewayNotifyInterval"], 180);
+        assert_eq!(values["gatewayAutoContinueFreshness"], 3600);
+        assert_eq!(values["imageInputMode"], "auto");
+    }
+
+    #[test]
+    fn agent_runtime_values_read_yaml_fields() {
+        let config: serde_yaml::Value = serde_yaml::from_str(
+            r#"
+agent:
+  max_turns: 240
+  gateway_timeout: 7200
+  restart_drain_timeout: 600
+  api_max_retries: 5
+  gateway_timeout_warning: 1200
+  clarify_timeout: 900
+  gateway_notify_interval: 240
+  gateway_auto_continue_freshness: 5400
+  image_input_mode: native
+"#,
+        )
+        .unwrap();
+
+        let values = build_hermes_agent_runtime_config_values(&config);
+        assert_eq!(values["agentMaxTurns"], 240);
+        assert_eq!(values["gatewayTimeout"], 7200);
+        assert_eq!(values["restartDrainTimeout"], 600);
+        assert_eq!(values["apiMaxRetries"], 5);
+        assert_eq!(values["gatewayTimeoutWarning"], 1200);
+        assert_eq!(values["clarifyTimeout"], 900);
+        assert_eq!(values["gatewayNotifyInterval"], 240);
+        assert_eq!(values["gatewayAutoContinueFreshness"], 5400);
+        assert_eq!(values["imageInputMode"], "native");
+    }
+
+    #[test]
+    fn merge_agent_runtime_config_preserves_unrelated_yaml() {
+        let mut config: serde_yaml::Value = serde_yaml::from_str(
+            r#"
+model:
+  provider: anthropic
+agent:
+  max_turns: 90
+  disabled_toolsets:
+    - terminal
+  custom_flag: keep-agent
+streaming:
+  enabled: true
+"#,
+        )
+        .unwrap();
+
+        merge_hermes_agent_runtime_config(
+            &mut config,
+            &json!({
+                "agentMaxTurns": "180",
+                "gatewayTimeout": "3600",
+                "restartDrainTimeout": "300",
+                "apiMaxRetries": "2",
+                "gatewayTimeoutWarning": "600",
+                "clarifyTimeout": "300",
+                "gatewayNotifyInterval": "120",
+                "gatewayAutoContinueFreshness": "1800",
+                "imageInputMode": "text",
+            }),
+        )
+        .unwrap();
+
+        assert_eq!(config["model"]["provider"].as_str(), Some("anthropic"));
+        assert_eq!(config["streaming"]["enabled"].as_bool(), Some(true));
+        assert_eq!(config["agent"]["max_turns"].as_i64(), Some(180));
+        assert_eq!(config["agent"]["gateway_timeout"].as_i64(), Some(3600));
+        assert_eq!(config["agent"]["restart_drain_timeout"].as_i64(), Some(300));
+        assert_eq!(config["agent"]["api_max_retries"].as_i64(), Some(2));
+        assert_eq!(
+            config["agent"]["gateway_timeout_warning"].as_i64(),
+            Some(600)
+        );
+        assert_eq!(config["agent"]["clarify_timeout"].as_i64(), Some(300));
+        assert_eq!(
+            config["agent"]["gateway_notify_interval"].as_i64(),
+            Some(120)
+        );
+        assert_eq!(
+            config["agent"]["gateway_auto_continue_freshness"].as_i64(),
+            Some(1800)
+        );
+        assert_eq!(config["agent"]["image_input_mode"].as_str(), Some("text"));
+        assert_eq!(
+            config["agent"]["disabled_toolsets"][0].as_str(),
+            Some("terminal")
+        );
+        assert_eq!(config["agent"]["custom_flag"].as_str(), Some("keep-agent"));
+    }
+
+    #[test]
+    fn merge_agent_runtime_config_allows_zero_disable_values() {
+        let mut config = serde_yaml::Value::Mapping(serde_yaml::Mapping::new());
+        merge_hermes_agent_runtime_config(
+            &mut config,
+            &json!({
+                "gatewayTimeout": "0",
+                "restartDrainTimeout": "0",
+                "gatewayTimeoutWarning": "0",
+                "gatewayNotifyInterval": "0",
+                "gatewayAutoContinueFreshness": "0",
+            }),
+        )
+        .unwrap();
+
+        assert_eq!(config["agent"]["gateway_timeout"].as_i64(), Some(0));
+        assert_eq!(config["agent"]["restart_drain_timeout"].as_i64(), Some(0));
+        assert_eq!(config["agent"]["gateway_timeout_warning"].as_i64(), Some(0));
+        assert_eq!(config["agent"]["gateway_notify_interval"].as_i64(), Some(0));
+        assert_eq!(
+            config["agent"]["gateway_auto_continue_freshness"].as_i64(),
+            Some(0)
+        );
+    }
+
+    #[test]
+    fn merge_agent_runtime_config_rejects_invalid_values() {
+        let mut config = serde_yaml::Value::Mapping(serde_yaml::Mapping::new());
+        let err =
+            merge_hermes_agent_runtime_config(&mut config, &json!({ "imageInputMode": "pixel" }))
+                .unwrap_err();
+        assert!(err.contains("agent.image_input_mode"));
+        let err = merge_hermes_agent_runtime_config(&mut config, &json!({ "agentMaxTurns": "0" }))
+            .unwrap_err();
+        assert!(err.contains("agent.max_turns"));
+        let err = merge_hermes_agent_runtime_config(&mut config, &json!({ "apiMaxRetries": "0" }))
+            .unwrap_err();
+        assert!(err.contains("agent.api_max_retries"));
+        let err =
+            merge_hermes_agent_runtime_config(&mut config, &json!({ "clarifyTimeout": "-1" }))
+                .unwrap_err();
+        assert!(err.contains("agent.clarify_timeout"));
     }
 }
 

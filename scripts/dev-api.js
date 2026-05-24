@@ -3325,6 +3325,7 @@ const HERMES_STREAMING_TRANSPORTS = new Set(['auto', 'draft', 'edit', 'off'])
 const HERMES_CODE_EXECUTION_MODES = new Set(['project', 'strict'])
 const HERMES_TERMINAL_BACKENDS = new Set(['local', 'ssh', 'docker', 'singularity', 'modal', 'daytona', 'vercel_sandbox'])
 const HERMES_BROWSER_ENGINES = new Set(['auto', 'lightpanda', 'chrome'])
+const HERMES_AGENT_IMAGE_INPUT_MODES = new Set(['auto', 'native', 'text'])
 const HERMES_DISPLAY_TOOL_PROGRESS_VALUES = new Set(['off', 'new', 'all', 'verbose'])
 const HERMES_DISPLAY_STREAMING_VALUES = new Set(['inherit', 'true', 'false'])
 const HERMES_DISPLAY_RESUME_VALUES = new Set(['full', 'minimal'])
@@ -3406,6 +3407,13 @@ function normalizeHermesBrowserEngine(value, strict = false) {
   const engine = String(value ?? '').trim().toLowerCase() || 'auto'
   if (HERMES_BROWSER_ENGINES.has(engine)) return engine
   if (strict) throw new Error('browser.engine 必须是 auto、lightpanda 或 chrome')
+  return 'auto'
+}
+
+function normalizeHermesImageInputMode(value, strict = false) {
+  const mode = String(value ?? '').trim().toLowerCase() || 'auto'
+  if (HERMES_AGENT_IMAGE_INPUT_MODES.has(mode)) return mode
+  if (strict) throw new Error('agent.image_input_mode 必须是 auto、native 或 text')
   return 'auto'
 }
 
@@ -3729,6 +3737,43 @@ export function mergeHermesAgentToolsetsConfig(config = {}, form = {}) {
     ? mergeConfigsPreservingFields(next.agent, {})
     : {}
   agent.disabled_toolsets = normalizeHermesToolsetList(Object.hasOwn(form, 'disabledToolsets') ? form.disabledToolsets : currentValues.disabledToolsets)
+  next.agent = agent
+  return next
+}
+
+export function buildHermesAgentRuntimeConfigValues(config = {}) {
+  const root = config && typeof config === 'object' && !Array.isArray(config) ? config : {}
+  const agent = root.agent && typeof root.agent === 'object' && !Array.isArray(root.agent)
+    ? root.agent
+    : {}
+  return {
+    agentMaxTurns: parseHermesInteger(agent.max_turns, 'agent.max_turns', 90, 1, 10000, false),
+    gatewayTimeout: parseHermesInteger(agent.gateway_timeout, 'agent.gateway_timeout', 1800, 0, 604800, false),
+    restartDrainTimeout: parseHermesInteger(agent.restart_drain_timeout, 'agent.restart_drain_timeout', 180, 0, 86400, false),
+    apiMaxRetries: parseHermesInteger(agent.api_max_retries, 'agent.api_max_retries', 3, 1, 20, false),
+    gatewayTimeoutWarning: parseHermesInteger(agent.gateway_timeout_warning, 'agent.gateway_timeout_warning', 900, 0, 604800, false),
+    clarifyTimeout: parseHermesInteger(agent.clarify_timeout, 'agent.clarify_timeout', 600, 0, 86400, false),
+    gatewayNotifyInterval: parseHermesInteger(agent.gateway_notify_interval, 'agent.gateway_notify_interval', 180, 0, 86400, false),
+    gatewayAutoContinueFreshness: parseHermesInteger(agent.gateway_auto_continue_freshness, 'agent.gateway_auto_continue_freshness', 3600, 0, 604800, false),
+    imageInputMode: normalizeHermesImageInputMode(agent.image_input_mode, false),
+  }
+}
+
+export function mergeHermesAgentRuntimeConfig(config = {}, form = {}) {
+  const next = mergeConfigsPreservingFields({}, config && typeof config === 'object' && !Array.isArray(config) ? config : {})
+  const currentValues = buildHermesAgentRuntimeConfigValues(next)
+  const agent = next.agent && typeof next.agent === 'object' && !Array.isArray(next.agent)
+    ? mergeConfigsPreservingFields(next.agent, {})
+    : {}
+  agent.max_turns = parseHermesInteger(Object.hasOwn(form, 'agentMaxTurns') ? form.agentMaxTurns : currentValues.agentMaxTurns, 'agent.max_turns', 90, 1, 10000, true)
+  agent.gateway_timeout = parseHermesInteger(Object.hasOwn(form, 'gatewayTimeout') ? form.gatewayTimeout : currentValues.gatewayTimeout, 'agent.gateway_timeout', 1800, 0, 604800, true)
+  agent.restart_drain_timeout = parseHermesInteger(Object.hasOwn(form, 'restartDrainTimeout') ? form.restartDrainTimeout : currentValues.restartDrainTimeout, 'agent.restart_drain_timeout', 180, 0, 86400, true)
+  agent.api_max_retries = parseHermesInteger(Object.hasOwn(form, 'apiMaxRetries') ? form.apiMaxRetries : currentValues.apiMaxRetries, 'agent.api_max_retries', 3, 1, 20, true)
+  agent.gateway_timeout_warning = parseHermesInteger(Object.hasOwn(form, 'gatewayTimeoutWarning') ? form.gatewayTimeoutWarning : currentValues.gatewayTimeoutWarning, 'agent.gateway_timeout_warning', 900, 0, 604800, true)
+  agent.clarify_timeout = parseHermesInteger(Object.hasOwn(form, 'clarifyTimeout') ? form.clarifyTimeout : currentValues.clarifyTimeout, 'agent.clarify_timeout', 600, 0, 86400, true)
+  agent.gateway_notify_interval = parseHermesInteger(Object.hasOwn(form, 'gatewayNotifyInterval') ? form.gatewayNotifyInterval : currentValues.gatewayNotifyInterval, 'agent.gateway_notify_interval', 180, 0, 86400, true)
+  agent.gateway_auto_continue_freshness = parseHermesInteger(Object.hasOwn(form, 'gatewayAutoContinueFreshness') ? form.gatewayAutoContinueFreshness : currentValues.gatewayAutoContinueFreshness, 'agent.gateway_auto_continue_freshness', 3600, 0, 604800, true)
+  agent.image_input_mode = normalizeHermesImageInputMode(Object.hasOwn(form, 'imageInputMode') ? form.imageInputMode : currentValues.imageInputMode, true)
   next.agent = agent
   return next
 }
@@ -10490,6 +10535,27 @@ const handlers = {
       configPath,
       backup,
       values: buildHermesAgentToolsetsConfigValues(next),
+    }
+  },
+
+  hermes_agent_runtime_config_read() {
+    const { configPath, exists, config } = readHermesConfigYamlObject()
+    return {
+      exists,
+      configPath,
+      values: buildHermesAgentRuntimeConfigValues(config),
+    }
+  },
+
+  hermes_agent_runtime_config_save({ form } = {}) {
+    const { configPath, config } = readHermesConfigYamlObject()
+    const next = mergeHermesAgentRuntimeConfig(config, form || {})
+    const backup = writeHermesConfigYamlObject(configPath, next)
+    return {
+      ok: true,
+      configPath,
+      backup,
+      values: buildHermesAgentRuntimeConfigValues(next),
     }
   },
 

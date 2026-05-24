@@ -67,6 +67,23 @@ test('Hermes 配置页会暴露全局禁用工具集结构化配置字段', () =
   }
 })
 
+test('Hermes 配置页会暴露 Agent 长跑保护结构化配置字段', () => {
+  for (const id of [
+    'hm-agent-runtime-save',
+    'hm-agent-max-turns',
+    'hm-agent-gateway-timeout',
+    'hm-agent-restart-drain-timeout',
+    'hm-agent-api-max-retries',
+    'hm-agent-gateway-timeout-warning',
+    'hm-agent-clarify-timeout',
+    'hm-agent-gateway-notify-interval',
+    'hm-agent-gateway-auto-continue-freshness',
+    'hm-agent-image-input-mode',
+  ]) {
+    assert.match(source, new RegExp(`id="${id}"`), `缺少 ${id}`)
+  }
+})
+
 test('Hermes 配置页会暴露未授权 DM 全局策略字段', () => {
   for (const id of [
     'hm-unauthorized-dm-save',
@@ -209,6 +226,7 @@ test('Hermes 配置页新增结构化配置不会暴露翻译 key', () => {
     key.includes('SkillsConfig') ||
     key.includes('QuickCommandsConfig') ||
     key.includes('AgentToolsetsConfig') ||
+    key.includes('AgentRuntimeConfig') ||
     key.includes('UnauthorizedDmConfig') ||
     key.includes('SecurityConfig') ||
     key.includes('HumanDelayConfig') ||
