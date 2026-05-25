@@ -58,6 +58,17 @@ test('Hermes 配置页会暴露快捷命令结构化配置字段', () => {
   }
 })
 
+test('Hermes 配置页会暴露基础模型结构化配置字段', () => {
+  for (const id of [
+    'hm-model-config-save',
+    'hm-model-default',
+    'hm-model-provider',
+    'hm-model-base-url',
+  ]) {
+    assert.match(source, new RegExp(`id="${id}"`), `缺少 ${id}`)
+  }
+})
+
 test('Hermes 配置页会暴露 provider 超时覆盖结构化配置字段', () => {
   for (const id of [
     'hm-provider-overrides-save',

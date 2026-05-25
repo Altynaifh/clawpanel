@@ -4292,6 +4292,44 @@ export function mergeHermesQuickCommandsConfig(config = {}, form = {}) {
   return next
 }
 
+function normalizeHermesModelConfigString(value, key, required = false) {
+  if (value == null || value === '') {
+    if (required) throw new Error(`${key} 不能为空`)
+    return ''
+  }
+  if (typeof value !== 'string') throw new Error(`${key} 必须是字符串`)
+  const text = value.trim()
+  if (!text && required) throw new Error(`${key} 不能为空`)
+  return text
+}
+
+export function buildHermesModelConfigValues(config = {}) {
+  const root = config && typeof config === 'object' && !Array.isArray(config) ? config : {}
+  const model = root.model && typeof root.model === 'object' && !Array.isArray(root.model) ? root.model : {}
+  const defaultModel = typeof model.default === 'string' ? model.default : model.model
+  return {
+    modelDefault: typeof defaultModel === 'string' ? defaultModel.trim() : '',
+    modelProvider: typeof model.provider === 'string' && model.provider.trim() ? model.provider.trim() : 'auto',
+    modelBaseUrl: typeof model.base_url === 'string' ? model.base_url.trim() : '',
+  }
+}
+
+export function mergeHermesModelConfig(config = {}, form = {}) {
+  const next = mergeConfigsPreservingFields({}, config && typeof config === 'object' && !Array.isArray(config) ? config : {})
+  const currentValues = buildHermesModelConfigValues(next)
+  const model = next.model && typeof next.model === 'object' && !Array.isArray(next.model)
+    ? mergeConfigsPreservingFields(next.model, {})
+    : {}
+  model.default = normalizeHermesModelConfigString(Object.hasOwn(form, 'modelDefault') ? form.modelDefault : currentValues.modelDefault, 'model.default', true)
+  model.provider = normalizeHermesModelConfigString(Object.hasOwn(form, 'modelProvider') ? form.modelProvider : currentValues.modelProvider, 'model.provider', true) || 'auto'
+  const baseUrl = normalizeHermesModelConfigString(Object.hasOwn(form, 'modelBaseUrl') ? form.modelBaseUrl : currentValues.modelBaseUrl, 'model.base_url')
+  if (baseUrl) model.base_url = baseUrl
+  else delete model.base_url
+  delete model.model
+  next.model = model
+  return next
+}
+
 function isHermesModelAliasName(value) {
   return /^[a-zA-Z0-9_.-]+$/.test(String(value || '').trim())
 }
@@ -11572,6 +11610,27 @@ const handlers = {
       configPath,
       backup,
       values: buildHermesQuickCommandsConfigValues(next),
+    }
+  },
+
+  hermes_model_config_read() {
+    const { configPath, exists, config } = readHermesConfigYamlObject()
+    return {
+      exists,
+      configPath,
+      values: buildHermesModelConfigValues(config),
+    }
+  },
+
+  hermes_model_config_save({ form } = {}) {
+    const { configPath, config } = readHermesConfigYamlObject()
+    const next = mergeHermesModelConfig(config, form || {})
+    const backup = writeHermesConfigYamlObject(configPath, next)
+    return {
+      ok: true,
+      configPath,
+      backup,
+      values: buildHermesModelConfigValues(next),
     }
   },
 

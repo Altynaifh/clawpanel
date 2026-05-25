@@ -4407,6 +4407,121 @@ fn merge_hermes_quick_commands_config(
     Ok(())
 }
 
+fn normalize_hermes_model_config_string(
+    value: Option<String>,
+    key: &str,
+    required: bool,
+) -> Result<String, String> {
+    let text = value.unwrap_or_default().trim().to_string();
+    if text.is_empty() && required {
+        return Err(format!("{key} 不能为空"));
+    }
+    Ok(text)
+}
+
+fn hermes_model_form_string(
+    form: &Value,
+    form_key: &str,
+    yaml_key: &str,
+    current: &Value,
+) -> Result<Option<String>, String> {
+    if let Some(value) = form.get(form_key) {
+        if let Some(text) = value.as_str() {
+            return Ok(Some(text.to_string()));
+        }
+        return Err(format!("{yaml_key} 必须是字符串"));
+    }
+    Ok(current.as_str().map(ToString::to_string))
+}
+
+fn build_hermes_model_config_values(config: &serde_yaml::Value) -> Value {
+    let root = config.as_mapping();
+    let model = root
+        .and_then(|map| map.get(yaml_key("model")))
+        .and_then(|value| value.as_mapping());
+    let model_default = model
+        .and_then(|map| {
+            map.get(yaml_key("default"))
+                .or_else(|| map.get(yaml_key("model")))
+        })
+        .and_then(|value| value.as_str())
+        .unwrap_or_default()
+        .trim()
+        .to_string();
+    let provider = model
+        .and_then(|map| map.get(yaml_key("provider")))
+        .and_then(|value| value.as_str())
+        .map(|value| value.trim().to_string())
+        .filter(|value| !value.is_empty())
+        .unwrap_or_else(|| "auto".to_string());
+    let base_url = model
+        .and_then(|map| map.get(yaml_key("base_url")))
+        .and_then(|value| value.as_str())
+        .unwrap_or_default()
+        .trim()
+        .to_string();
+
+    serde_json::json!({
+        "modelDefault": model_default,
+        "modelProvider": provider,
+        "modelBaseUrl": base_url,
+    })
+}
+
+fn merge_hermes_model_config(config: &mut serde_yaml::Value, form: &Value) -> Result<(), String> {
+    let current = build_hermes_model_config_values(config);
+    let model_default = normalize_hermes_model_config_string(
+        hermes_model_form_string(
+            form,
+            "modelDefault",
+            "model.default",
+            &current["modelDefault"],
+        )?,
+        "model.default",
+        true,
+    )?;
+    let provider = normalize_hermes_model_config_string(
+        hermes_model_form_string(
+            form,
+            "modelProvider",
+            "model.provider",
+            &current["modelProvider"],
+        )?,
+        "model.provider",
+        true,
+    )?;
+    let base_url = normalize_hermes_model_config_string(
+        hermes_model_form_string(
+            form,
+            "modelBaseUrl",
+            "model.base_url",
+            &current["modelBaseUrl"],
+        )?,
+        "model.base_url",
+        false,
+    )?;
+
+    let root = ensure_yaml_object(config)?;
+    let mut model = root
+        .get(yaml_key("model"))
+        .and_then(|value| value.as_mapping())
+        .cloned()
+        .unwrap_or_default();
+    model.insert(
+        yaml_key("default"),
+        serde_yaml::Value::String(model_default),
+    );
+    model.insert(yaml_key("provider"), serde_yaml::Value::String(provider));
+    if base_url.is_empty() {
+        model.remove(yaml_key("base_url"));
+    } else {
+        model.insert(yaml_key("base_url"), serde_yaml::Value::String(base_url));
+    }
+    model.remove(yaml_key("model"));
+    root.insert(yaml_key("model"), serde_yaml::Value::Mapping(model));
+    Ok(())
+}
+
 fn is_hermes_model_alias_name(value: &str) -> bool {
     let text = value.trim();
     !text.is_empty()
@@ -8714,6 +8829,30 @@ pub fn hermes_quick_commands_config_save(form: Value) -> Result<Value, String> {
         "configPath": config_path.to_string_lossy(),
         "backup": backup,
         "values": build_hermes_quick_commands_config_values(&config),
+    }))
+}
+
+#[tauri::command]
+pub fn hermes_model_config_read() -> Result<Value, String> {
+    let (config_path, exists, config) = read_hermes_channel_yaml_config()?;
+    ensure_yaml_object(&mut config.clone())?;
+    Ok(serde_json::json!({
+        "exists": exists,
+        "configPath": config_path.to_string_lossy(),
+        "values": build_hermes_model_config_values(&config),
+    }))
+}
+
+#[tauri::command]
+pub fn hermes_model_config_save(form: Value) -> Result<Value, String> {
+    let (config_path, _exists, mut config) = read_hermes_channel_yaml_config()?;
+    merge_hermes_model_config(&mut config, &form)?;
+    let backup = write_hermes_yaml_config(&config_path, &config)?;
+    Ok(serde_json::json!({
+        "ok": true,
+        "configPath": config_path.to_string_lossy(),
+        "backup": backup,
+        "values": build_hermes_model_config_values(&config),
     }))
 }
 
@@ -16528,6 +16667,157 @@ streaming:
         )
         .unwrap_err();
         assert!(err.contains("quick_commands.restart.target"));
+    }
+}
+
+#[cfg(test)]
+mod hermes_model_config_tests {
+    use super::{build_hermes_model_config_values, merge_hermes_model_config};
+    use serde_json::json;
+
+    #[test]
+    fn model_values_have_defaults_and_read_legacy_model_key() {
+        let config: serde_yaml::Value = serde_yaml::from_str("{}").unwrap();
+        let values = build_hermes_model_config_values(&config);
+        assert_eq!(values["modelDefault"], "");
+        assert_eq!(values["modelProvider"], "auto");
+        assert_eq!(values["modelBaseUrl"], "");
+
+        let config: serde_yaml::Value = serde_yaml::from_str(
+            r#"
+model:
+  model: anthropic/claude-sonnet-4-6
+  provider: openrouter
+  base_url: https://openrouter.ai/api/v1
+"#,
+        )
+        .unwrap();
+        let values = build_hermes_model_config_values(&config);
+        assert_eq!(values["modelDefault"], "anthropic/claude-sonnet-4-6");
+        assert_eq!(values["modelProvider"], "openrouter");
+        assert_eq!(values["modelBaseUrl"], "https://openrouter.ai/api/v1");
+    }
+
+    #[test]
+    fn merge_model_preserves_unknown_fields_and_writes_base_url() {
+        let mut config: serde_yaml::Value = serde_yaml::from_str(
+            r#"
+model:
+  default: old-model
+  provider: auto
+  base_url: https://old.example/v1
+  auth_mode: env
+  context_length: 200000
+memory:
+  memory_enabled: true
+"#,
+        )
+        .unwrap();
+
+        merge_hermes_model_config(
+            &mut config,
+            &json!({
+                "modelDefault": "anthropic/claude-opus-4.6",
+                "modelProvider": "openrouter",
+                "modelBaseUrl": "https://openrouter.ai/api/v1",
+            }),
+        )
+        .unwrap();
+
+        assert_eq!(
+            config["model"]["default"].as_str(),
+            Some("anthropic/claude-opus-4.6")
+        );
+        assert_eq!(config["model"]["provider"].as_str(), Some("openrouter"));
+        assert_eq!(
+            config["model"]["base_url"].as_str(),
+            Some("https://openrouter.ai/api/v1")
+        );
+        assert_eq!(config["model"]["auth_mode"].as_str(), Some("env"));
+        assert_eq!(config["model"]["context_length"].as_i64(), Some(200000));
+        assert_eq!(config["memory"]["memory_enabled"].as_bool(), Some(true));
+    }
+
+    #[test]
+    fn merge_model_empty_base_url_removes_field_and_legacy_model_key() {
+        let mut config: serde_yaml::Value = serde_yaml::from_str(
+            r#"
+model:
+  model: old-model
+  provider: custom
+  base_url: https://old.example/v1
+  max_tokens: 8192
+display:
+  language: zh
+"#,
+        )
+        .unwrap();
+
+        merge_hermes_model_config(
+            &mut config,
+            &json!({
+                "modelDefault": "google/gemini-3-flash-preview",
+                "modelProvider": "auto",
+                "modelBaseUrl": "  ",
+            }),
+        )
+        .unwrap();
+
+        assert_eq!(
+            config["model"]["default"].as_str(),
+            Some("google/gemini-3-flash-preview")
+        );
+        assert_eq!(config["model"]["provider"].as_str(), Some("auto"));
+        assert!(config["model"]["base_url"].is_null());
+        assert!(config["model"]["model"].is_null());
+        assert_eq!(config["model"]["max_tokens"].as_i64(), Some(8192));
+        assert_eq!(config["display"]["language"].as_str(), Some("zh"));
+    }
+
+    #[test]
+    fn merge_model_rejects_empty_model() {
+        let mut config = serde_yaml::Value::Mapping(serde_yaml::Mapping::new());
+        let err = merge_hermes_model_config(
+            &mut config,
+            &json!({
+                "modelDefault": " ",
+                "modelProvider": "auto",
+            }),
+        )
+        .unwrap_err();
+        assert!(err.contains("model.default"));
+    }
+
+    #[test]
+    fn merge_model_rejects_non_string_form_values() {
+        let mut config: serde_yaml::Value = serde_yaml::from_str(
+            r#"
+model:
+  default: gpt-5
+  provider: auto
+"#,
+        )
+        .unwrap();
+        let err = merge_hermes_model_config(
+            &mut config,
+            &json!({
+                "modelDefault": "gpt-5",
+                "modelProvider": 123,
+            }),
+        )
+        .unwrap_err();
+        assert!(err.contains("model.provider"));
+
+        let err = merge_hermes_model_config(
+            &mut config,
+            &json!({
+                "modelDefault": "gpt-5",
+                "modelProvider": "auto",
+                "modelBaseUrl": 123,
+            }),
+        )
+        .unwrap_err();
+        assert!(err.contains("model.base_url"));
     }
 }
 
