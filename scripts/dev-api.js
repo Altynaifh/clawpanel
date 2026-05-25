@@ -4513,6 +4513,56 @@ function normalizeHermesMcpTimeout(entry, field, key) {
   entry[field] = parseHermesInteger(entry[field], key, 120, 1, 86400, true)
 }
 
+function normalizeHermesMcpSampling(value, key) {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) {
+    throw new Error(`${key} 必须是 JSON 对象`)
+  }
+  const sampling = mergeConfigsPreservingFields(value, {})
+  if (Object.hasOwn(sampling, 'enabled')) {
+    if (typeof sampling.enabled !== 'boolean') throw new Error(`${key}.enabled 必须是布尔值`)
+  }
+  if (Object.hasOwn(sampling, 'model')) {
+    if (sampling.model == null || sampling.model === '') {
+      delete sampling.model
+    } else if (typeof sampling.model !== 'string') {
+      throw new Error(`${key}.model 必须是字符串`)
+    } else {
+      const model = sampling.model.trim()
+      if (model) sampling.model = model
+      else delete sampling.model
+    }
+  }
+  if (Object.hasOwn(sampling, 'max_tokens_cap')) {
+    sampling.max_tokens_cap = parseHermesInteger(sampling.max_tokens_cap, `${key}.max_tokens_cap`, 4096, 1, 1000000, true)
+  }
+  if (Object.hasOwn(sampling, 'timeout')) {
+    sampling.timeout = parseHermesInteger(sampling.timeout, `${key}.timeout`, 30, 1, 86400, true)
+  }
+  if (Object.hasOwn(sampling, 'max_rpm')) {
+    sampling.max_rpm = parseHermesInteger(sampling.max_rpm, `${key}.max_rpm`, 10, 1, 100000, true)
+  }
+  if (Object.hasOwn(sampling, 'allowed_models')) {
+    sampling.allowed_models = normalizeHermesStringArray(sampling.allowed_models, `${key}.allowed_models`)
+  }
+  if (Object.hasOwn(sampling, 'max_tool_rounds')) {
+    sampling.max_tool_rounds = parseHermesInteger(sampling.max_tool_rounds, `${key}.max_tool_rounds`, 5, 0, 1000, true)
+  }
+  if (Object.hasOwn(sampling, 'log_level')) {
+    if (sampling.log_level == null || sampling.log_level === '') {
+      delete sampling.log_level
+    } else if (typeof sampling.log_level !== 'string') {
+      throw new Error(`${key}.log_level 必须是字符串`)
+    } else {
+      const level = sampling.log_level.trim().toLowerCase()
+      if (!['debug', 'info', 'warning', 'error'].includes(level)) {
+        throw new Error(`${key}.log_level 必须是 debug、info、warning 或 error`)
+      }
+      sampling.log_level = level
+    }
+  }
+  return sampling
+}
+
 function validateHermesMcpServers(value) {
   if (!value || typeof value !== 'object' || Array.isArray(value)) {
     throw new Error('mcp_servers 必须是 JSON 对象')
@@ -4540,6 +4590,7 @@ function validateHermesMcpServers(value) {
     if (Object.hasOwn(entry, 'headers')) entry.headers = normalizeHermesStringMap(entry.headers, `mcp_servers.${name}.headers`)
     normalizeHermesMcpTimeout(entry, 'timeout', `mcp_servers.${name}.timeout`)
     normalizeHermesMcpTimeout(entry, 'connect_timeout', `mcp_servers.${name}.connect_timeout`)
+    if (Object.hasOwn(entry, 'sampling')) entry.sampling = normalizeHermesMcpSampling(entry.sampling, `mcp_servers.${name}.sampling`)
     normalized[name] = entry
   }
   return normalized
