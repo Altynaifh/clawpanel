@@ -262,6 +262,10 @@ const TERMINAL_DEFAULTS = {
   terminalLifetimeSeconds: 300,
   terminalDockerMountCwdToWorkspace: false,
   terminalDockerRunAsHostUser: false,
+  terminalDockerImage: '',
+  terminalSingularityImage: '',
+  terminalModalImage: '',
+  terminalDaytonaImage: '',
   terminalContainerCpu: 1,
   terminalContainerMemory: 5120,
   terminalContainerDisk: 51200,
@@ -1992,6 +1996,22 @@ export function render() {
           <div class="hm-config-subtitle">${t('engine.hermesTerminalConfigContainerTitle')}</div>
           <div class="hm-config-runtime-grid hm-config-terminal-grid">
             <label class="hm-field">
+              <span class="hm-field-label">${t('engine.hermesTerminalConfigDockerImage')}</span>
+              <input id="hm-terminal-docker-image" class="hm-input" value="${esc(terminalValues.terminalDockerImage)}" placeholder="nikolaik/python-nodejs:python3.11-nodejs20" ${disabled ? 'disabled' : ''}>
+            </label>
+            <label class="hm-field">
+              <span class="hm-field-label">${t('engine.hermesTerminalConfigSingularityImage')}</span>
+              <input id="hm-terminal-singularity-image" class="hm-input" value="${esc(terminalValues.terminalSingularityImage)}" placeholder="docker://nikolaik/python-nodejs:python3.11-nodejs20" ${disabled ? 'disabled' : ''}>
+            </label>
+            <label class="hm-field">
+              <span class="hm-field-label">${t('engine.hermesTerminalConfigModalImage')}</span>
+              <input id="hm-terminal-modal-image" class="hm-input" value="${esc(terminalValues.terminalModalImage)}" placeholder="nikolaik/python-nodejs:python3.11-nodejs20" ${disabled ? 'disabled' : ''}>
+            </label>
+            <label class="hm-field">
+              <span class="hm-field-label">${t('engine.hermesTerminalConfigDaytonaImage')}</span>
+              <input id="hm-terminal-daytona-image" class="hm-input" value="${esc(terminalValues.terminalDaytonaImage)}" placeholder="nikolaik/python-nodejs:python3.11-nodejs20" ${disabled ? 'disabled' : ''}>
+            </label>
+            <label class="hm-field">
               <span class="hm-field-label">${t('engine.hermesTerminalConfigContainerCpu')}</span>
               <input id="hm-terminal-container-cpu" class="hm-input" type="number" inputmode="numeric" min="1" max="64" step="1" value="${esc(terminalValues.terminalContainerCpu)}" ${disabled ? 'disabled' : ''}>
             </label>
@@ -3674,6 +3694,10 @@ export function render() {
       terminalLifetimeSeconds: el.querySelector('#hm-terminal-lifetime-seconds')?.value || '300',
       terminalDockerMountCwdToWorkspace: !!el.querySelector('#hm-terminal-docker-mount-cwd-to-workspace')?.checked,
       terminalDockerRunAsHostUser: !!el.querySelector('#hm-terminal-docker-run-as-host-user')?.checked,
+      terminalDockerImage: el.querySelector('#hm-terminal-docker-image')?.value || '',
+      terminalSingularityImage: el.querySelector('#hm-terminal-singularity-image')?.value || '',
+      terminalModalImage: el.querySelector('#hm-terminal-modal-image')?.value || '',
+      terminalDaytonaImage: el.querySelector('#hm-terminal-daytona-image')?.value || '',
       terminalContainerCpu: el.querySelector('#hm-terminal-container-cpu')?.value || '1',
       terminalContainerMemory: el.querySelector('#hm-terminal-container-memory')?.value || '5120',
       terminalContainerDisk: el.querySelector('#hm-terminal-container-disk')?.value || '51200',

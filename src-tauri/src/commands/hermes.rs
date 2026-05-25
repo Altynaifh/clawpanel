@@ -2407,6 +2407,14 @@ fn yaml_string_field(map: &serde_yaml::Mapping, key: &str) -> Option<String> {
         .map(|v| v.to_string())
 }
 
+fn set_optional_yaml_string(map: &mut serde_yaml::Mapping, key: &str, value: String) {
+    if value.is_empty() {
+        map.remove(yaml_key(key));
+    } else {
+        map.insert(yaml_key(key), serde_yaml::Value::String(value));
+    }
+}
+
 fn yaml_string_sequence_field(map: &serde_yaml::Mapping, key: &str) -> Vec<String> {
     yaml_get(map, key)
         .and_then(|value| value.as_sequence())
@@ -7826,6 +7834,13 @@ fn merge_hermes_execution_limits_config(
 fn build_hermes_terminal_config_values(config: &serde_yaml::Value) -> Value {
     let root = config.as_mapping();
     let terminal = root.and_then(|map| yaml_get_mapping(map, "terminal"));
+    let terminal_string = |key: &str| {
+        terminal
+            .and_then(|map| yaml_string_field(map, key))
+            .map(|value| value.trim().to_string())
+            .filter(|value| !value.is_empty())
+            .unwrap_or_default()
+    };
     let terminal_backend = normalize_hermes_terminal_backend(
         terminal.and_then(|map| yaml_string_field(map, "backend")),
         false,
@@ -7848,6 +7863,10 @@ fn build_hermes_terminal_config_values(config: &serde_yaml::Value) -> Value {
     let terminal_docker_run_as_host_user = terminal
         .and_then(|map| yaml_bool_field(map, "docker_run_as_host_user"))
         .unwrap_or(false);
+    let terminal_docker_image = terminal_string("docker_image");
+    let terminal_singularity_image = terminal_string("singularity_image");
+    let terminal_modal_image = terminal_string("modal_image");
+    let terminal_daytona_image = terminal_string("daytona_image");
     let terminal_container_cpu = terminal
         .map(|map| bounded_hermes_i64(yaml_i64_field(map, "container_cpu"), 1, 1, 64))
         .unwrap_or(1);
@@ -7868,6 +7887,10 @@ fn build_hermes_terminal_config_values(config: &serde_yaml::Value) -> Value {
         "terminalLifetimeSeconds": terminal_lifetime_seconds,
         "terminalDockerMountCwdToWorkspace": terminal_docker_mount_cwd_to_workspace,
         "terminalDockerRunAsHostUser": terminal_docker_run_as_host_user,
+        "terminalDockerImage": terminal_docker_image,
+        "terminalSingularityImage": terminal_singularity_image,
+        "terminalModalImage": terminal_modal_image,
+        "terminalDaytonaImage": terminal_daytona_image,
         "terminalContainerCpu": terminal_container_cpu,
         "terminalContainerMemory": terminal_container_memory,
         "terminalContainerDisk": terminal_container_disk,
@@ -7935,6 +7958,42 @@ fn merge_hermes_terminal_config(
                 .as_bool()
                 .unwrap_or(false)
         });
+    let terminal_docker_image = form_string(form, "terminalDockerImage")
+        .or_else(|| {
+            current["terminalDockerImage"]
+                .as_str()
+                .map(ToString::to_string)
+        })
+        .unwrap_or_default()
+        .trim()
+        .to_string();
+    let terminal_singularity_image = form_string(form, "terminalSingularityImage")
+        .or_else(|| {
+            current["terminalSingularityImage"]
+                .as_str()
+                .map(ToString::to_string)
+        })
+        .unwrap_or_default()
+        .trim()
+        .to_string();
+    let terminal_modal_image = form_string(form, "terminalModalImage")
+        .or_else(|| {
+            current["terminalModalImage"]
+                .as_str()
+                .map(ToString::to_string)
+        })
+        .unwrap_or_default()
+        .trim()
+        .to_string();
+    let terminal_daytona_image = form_string(form, "terminalDaytonaImage")
+        .or_else(|| {
+            current["terminalDaytonaImage"]
+                .as_str()
+                .map(ToString::to_string)
+        })
+        .unwrap_or_default()
+        .trim()
+        .to_string();
     let terminal_container_cpu = validate_hermes_i64(
         if form.get("terminalContainerCpu").is_some() {
             form_i64(form, "terminalContainerCpu")
@@ -7998,6 +8057,10 @@ fn merge_hermes_terminal_config(
         yaml_key("docker_run_as_host_user"),
         serde_yaml::Value::Bool(terminal_docker_run_as_host_user),
     );
+    set_optional_yaml_string(terminal, "docker_image", terminal_docker_image);
+    set_optional_yaml_string(terminal, "singularity_image", terminal_singularity_image);
+    set_optional_yaml_string(terminal, "modal_image", terminal_modal_image);
+    set_optional_yaml_string(terminal, "daytona_image", terminal_daytona_image);
     terminal.insert(
         yaml_key("container_cpu"),
         serde_yaml::Value::Number(terminal_container_cpu.into()),
@@ -16515,6 +16578,10 @@ mod hermes_terminal_config_tests {
         assert_eq!(values["terminalContainerMemory"], 5120);
         assert_eq!(values["terminalContainerDisk"], 51200);
         assert_eq!(values["terminalContainerPersistent"], true);
+        assert_eq!(values["terminalDockerImage"], "");
+        assert_eq!(values["terminalSingularityImage"], "");
+        assert_eq!(values["terminalModalImage"], "");
+        assert_eq!(values["terminalDaytonaImage"], "");
     }
 
     #[test]
@@ -16528,6 +16595,10 @@ terminal:
   lifetime_seconds: 1800
   docker_mount_cwd_to_workspace: true
   docker_run_as_host_user: true
+  docker_image: nikolaik/python-nodejs:python3.11-nodejs20
+  singularity_image: docker://nikolaik/python-nodejs:python3.11-nodejs20
+  modal_image: python:3.12
+  daytona_image: ubuntu:24.04
   container_cpu: 4
   container_memory: 8192
   container_disk: 102400
@@ -16542,6 +16613,16 @@ terminal:
         assert_eq!(values["terminalLifetimeSeconds"], 1800);
         assert_eq!(values["terminalDockerMountCwdToWorkspace"], true);
         assert_eq!(values["terminalDockerRunAsHostUser"], true);
+        assert_eq!(
+            values["terminalDockerImage"],
+            "nikolaik/python-nodejs:python3.11-nodejs20"
+        );
+        assert_eq!(
+            values["terminalSingularityImage"],
+            "docker://nikolaik/python-nodejs:python3.11-nodejs20"
+        );
+        assert_eq!(values["terminalModalImage"], "python:3.12");
+        assert_eq!(values["terminalDaytonaImage"], "ubuntu:24.04");
         assert_eq!(values["terminalContainerCpu"], 4);
         assert_eq!(values["terminalContainerMemory"], 8192);
         assert_eq!(values["terminalContainerDisk"], 102400);
@@ -16575,6 +16656,10 @@ streaming:
                 "terminalLifetimeSeconds": "1200",
                 "terminalDockerMountCwdToWorkspace": true,
                 "terminalDockerRunAsHostUser": true,
+                "terminalDockerImage": "nikolaik/python-nodejs:python3.12-nodejs22",
+                "terminalSingularityImage": "docker://ubuntu:24.04",
+                "terminalModalImage": "debian:bookworm",
+                "terminalDaytonaImage": "ubuntu:22.04",
                 "terminalContainerCpu": "2",
                 "terminalContainerMemory": "6144",
                 "terminalContainerDisk": "20480",
@@ -16597,6 +16682,22 @@ streaming:
             config["terminal"]["docker_run_as_host_user"].as_bool(),
             Some(true)
         );
+        assert_eq!(
+            config["terminal"]["docker_image"].as_str(),
+            Some("nikolaik/python-nodejs:python3.12-nodejs22")
+        );
+        assert_eq!(
+            config["terminal"]["singularity_image"].as_str(),
+            Some("docker://ubuntu:24.04")
+        );
+        assert_eq!(
+            config["terminal"]["modal_image"].as_str(),
+            Some("debian:bookworm")
+        );
+        assert_eq!(
+            config["terminal"]["daytona_image"].as_str(),
+            Some("ubuntu:22.04")
+        );
         assert_eq!(config["terminal"]["container_cpu"].as_i64(), Some(2));
         assert_eq!(config["terminal"]["container_memory"].as_i64(), Some(6144));
         assert_eq!(config["terminal"]["container_disk"].as_i64(), Some(20480));
@@ -16605,13 +16706,44 @@ streaming:
             Some(false)
         );
         assert_eq!(
-            config["terminal"]["docker_image"].as_str(),
-            Some("custom/python-node")
-        );
-        assert_eq!(
             config["terminal"]["docker_forward_env"][0].as_str(),
             Some("GITHUB_TOKEN")
         );
+        assert_eq!(
+            config["terminal"]["custom_flag"].as_str(),
+            Some("keep-terminal")
+        );
+    }
+
+    #[test]
+    fn merge_terminal_config_removes_empty_images() {
+        let mut config: serde_yaml::Value = serde_yaml::from_str(
+            r#"
+terminal:
+  docker_image: old-docker
+  singularity_image: old-singularity
+  modal_image: old-modal
+  daytona_image: old-daytona
+  custom_flag: keep-terminal
+"#,
+        )
+        .unwrap();
+
+        merge_hermes_terminal_config(
+            &mut config,
+            &json!({
+                "terminalDockerImage": "",
+                "terminalSingularityImage": "  ",
+                "terminalModalImage": "",
+                "terminalDaytonaImage": " ",
+            }),
+        )
+        .unwrap();
+
+        assert!(config["terminal"]["docker_image"].is_null());
+        assert!(config["terminal"]["singularity_image"].is_null());
+        assert!(config["terminal"]["modal_image"].is_null());
+        assert!(config["terminal"]["daytona_image"].is_null());
         assert_eq!(
             config["terminal"]["custom_flag"].as_str(),
             Some("keep-terminal")

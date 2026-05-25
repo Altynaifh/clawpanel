@@ -20,6 +20,10 @@ test('Hermes 终端执行配置读取会提供上游默认值', () => {
     terminalContainerMemory: 5120,
     terminalContainerDisk: 51200,
     terminalContainerPersistent: true,
+    terminalDockerImage: '',
+    terminalSingularityImage: '',
+    terminalModalImage: '',
+    terminalDaytonaImage: '',
   })
 })
 
@@ -32,6 +36,10 @@ test('Hermes 终端执行配置读取会回显 YAML 字段', () => {
       lifetime_seconds: 1800,
       docker_mount_cwd_to_workspace: true,
       docker_run_as_host_user: true,
+      docker_image: 'nikolaik/python-nodejs:python3.11-nodejs20',
+      singularity_image: 'docker://nikolaik/python-nodejs:python3.11-nodejs20',
+      modal_image: 'python:3.12',
+      daytona_image: 'ubuntu:24.04',
       container_cpu: 4,
       container_memory: 8192,
       container_disk: 102400,
@@ -45,6 +53,10 @@ test('Hermes 终端执行配置读取会回显 YAML 字段', () => {
   assert.equal(values.terminalLifetimeSeconds, 1800)
   assert.equal(values.terminalDockerMountCwdToWorkspace, true)
   assert.equal(values.terminalDockerRunAsHostUser, true)
+  assert.equal(values.terminalDockerImage, 'nikolaik/python-nodejs:python3.11-nodejs20')
+  assert.equal(values.terminalSingularityImage, 'docker://nikolaik/python-nodejs:python3.11-nodejs20')
+  assert.equal(values.terminalModalImage, 'python:3.12')
+  assert.equal(values.terminalDaytonaImage, 'ubuntu:24.04')
   assert.equal(values.terminalContainerCpu, 4)
   assert.equal(values.terminalContainerMemory, 8192)
   assert.equal(values.terminalContainerDisk, 102400)
@@ -68,6 +80,10 @@ test('Hermes 终端执行配置保存会保留未知字段并写入上游结构'
     terminalLifetimeSeconds: '1200',
     terminalDockerMountCwdToWorkspace: true,
     terminalDockerRunAsHostUser: true,
+    terminalDockerImage: 'nikolaik/python-nodejs:python3.12-nodejs22',
+    terminalSingularityImage: 'docker://ubuntu:24.04',
+    terminalModalImage: 'debian:bookworm',
+    terminalDaytonaImage: 'ubuntu:22.04',
     terminalContainerCpu: '2',
     terminalContainerMemory: '6144',
     terminalContainerDisk: '20480',
@@ -82,12 +98,38 @@ test('Hermes 终端执行配置保存会保留未知字段并写入上游结构'
   assert.equal(next.terminal.lifetime_seconds, 1200)
   assert.equal(next.terminal.docker_mount_cwd_to_workspace, true)
   assert.equal(next.terminal.docker_run_as_host_user, true)
+  assert.equal(next.terminal.docker_image, 'nikolaik/python-nodejs:python3.12-nodejs22')
+  assert.equal(next.terminal.singularity_image, 'docker://ubuntu:24.04')
+  assert.equal(next.terminal.modal_image, 'debian:bookworm')
+  assert.equal(next.terminal.daytona_image, 'ubuntu:22.04')
   assert.equal(next.terminal.container_cpu, 2)
   assert.equal(next.terminal.container_memory, 6144)
   assert.equal(next.terminal.container_disk, 20480)
   assert.equal(next.terminal.container_persistent, false)
-  assert.equal(next.terminal.docker_image, 'custom/python-node')
   assert.deepEqual(next.terminal.docker_forward_env, ['GITHUB_TOKEN'])
+  assert.equal(next.terminal.custom_flag, 'keep-terminal')
+})
+
+test('Hermes 终端执行配置保存空镜像会删除对应字段', () => {
+  const next = mergeHermesTerminalConfig({
+    terminal: {
+      docker_image: 'old-docker',
+      singularity_image: 'old-singularity',
+      modal_image: 'old-modal',
+      daytona_image: 'old-daytona',
+      custom_flag: 'keep-terminal',
+    },
+  }, {
+    terminalDockerImage: '',
+    terminalSingularityImage: '  ',
+    terminalModalImage: '',
+    terminalDaytonaImage: ' ',
+  })
+
+  assert.equal(Object.hasOwn(next.terminal, 'docker_image'), false)
+  assert.equal(Object.hasOwn(next.terminal, 'singularity_image'), false)
+  assert.equal(Object.hasOwn(next.terminal, 'modal_image'), false)
+  assert.equal(Object.hasOwn(next.terminal, 'daytona_image'), false)
   assert.equal(next.terminal.custom_flag, 'keep-terminal')
 })
 

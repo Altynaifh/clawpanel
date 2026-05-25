@@ -4309,6 +4309,12 @@ function normalizeHermesOptionalModelInteger(value, key) {
   return parseHermesInteger(raw, key, 0, 1, 10000000, true)
 }
 
+function normalizeHermesOptionalString(value, key) {
+  if (value == null || value === '') return ''
+  if (typeof value !== 'string') throw new Error(`${key} 必须是字符串`)
+  return value.trim()
+}
+
 export function buildHermesModelConfigValues(config = {}) {
   const root = config && typeof config === 'object' && !Array.isArray(config) ? config : {}
   const model = root.model && typeof root.model === 'object' && !Array.isArray(root.model) ? root.model : {}
@@ -5153,6 +5159,10 @@ export function buildHermesTerminalConfigValues(config = {}) {
     terminalLifetimeSeconds: parseHermesInteger(terminal.lifetime_seconds, 'terminal.lifetime_seconds', 300, 0, 86400, false),
     terminalDockerMountCwdToWorkspace: readHermesBool(terminal.docker_mount_cwd_to_workspace, false),
     terminalDockerRunAsHostUser: readHermesBool(terminal.docker_run_as_host_user, false),
+    terminalDockerImage: typeof terminal.docker_image === 'string' ? terminal.docker_image.trim() : '',
+    terminalSingularityImage: typeof terminal.singularity_image === 'string' ? terminal.singularity_image.trim() : '',
+    terminalModalImage: typeof terminal.modal_image === 'string' ? terminal.modal_image.trim() : '',
+    terminalDaytonaImage: typeof terminal.daytona_image === 'string' ? terminal.daytona_image.trim() : '',
     terminalContainerCpu: parseHermesInteger(terminal.container_cpu, 'terminal.container_cpu', 1, 1, 64, false),
     terminalContainerMemory: parseHermesInteger(terminal.container_memory, 'terminal.container_memory', 5120, 128, 1048576, false),
     terminalContainerDisk: parseHermesInteger(terminal.container_disk, 'terminal.container_disk', 51200, 1024, 10485760, false),
@@ -5172,6 +5182,16 @@ export function mergeHermesTerminalConfig(config = {}, form = {}) {
   terminal.lifetime_seconds = parseHermesInteger(Object.hasOwn(form, 'terminalLifetimeSeconds') ? form.terminalLifetimeSeconds : currentValues.terminalLifetimeSeconds, 'terminal.lifetime_seconds', 300, 0, 86400, true)
   terminal.docker_mount_cwd_to_workspace = formHermesBool(form, 'terminalDockerMountCwdToWorkspace', currentValues.terminalDockerMountCwdToWorkspace)
   terminal.docker_run_as_host_user = formHermesBool(form, 'terminalDockerRunAsHostUser', currentValues.terminalDockerRunAsHostUser)
+  for (const [formKey, yamlKey] of [
+    ['terminalDockerImage', 'docker_image'],
+    ['terminalSingularityImage', 'singularity_image'],
+    ['terminalModalImage', 'modal_image'],
+    ['terminalDaytonaImage', 'daytona_image'],
+  ]) {
+    const image = normalizeHermesOptionalString(Object.hasOwn(form, formKey) ? form[formKey] : currentValues[formKey], `terminal.${yamlKey}`)
+    if (image) terminal[yamlKey] = image
+    else delete terminal[yamlKey]
+  }
   terminal.container_cpu = parseHermesInteger(Object.hasOwn(form, 'terminalContainerCpu') ? form.terminalContainerCpu : currentValues.terminalContainerCpu, 'terminal.container_cpu', 1, 1, 64, true)
   terminal.container_memory = parseHermesInteger(Object.hasOwn(form, 'terminalContainerMemory') ? form.terminalContainerMemory : currentValues.terminalContainerMemory, 'terminal.container_memory', 5120, 128, 1048576, true)
   terminal.container_disk = parseHermesInteger(Object.hasOwn(form, 'terminalContainerDisk') ? form.terminalContainerDisk : currentValues.terminalContainerDisk, 'terminal.container_disk', 51200, 1024, 10485760, true)
