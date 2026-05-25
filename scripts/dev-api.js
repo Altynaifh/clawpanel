@@ -5203,6 +5203,7 @@ export function buildHermesSessionRuntimeConfigValues(config = {}) {
     atHour: parseHermesInteger(sessionReset.at_hour, 'at_hour', 4, 0, 23, false),
     groupSessionsPerUser: readHermesBool(root.group_sessions_per_user, true),
     threadSessionsPerUser: readHermesBool(root.thread_sessions_per_user, false),
+    worktreeEnabled: readHermesBool(root.worktree, false),
   }
 }
 
@@ -5224,6 +5225,7 @@ export function mergeHermesSessionRuntimeConfig(config = {}, form = {}) {
   next.session_reset = sessionReset
   next.group_sessions_per_user = formHermesBool(form, 'groupSessionsPerUser', currentValues.groupSessionsPerUser)
   next.thread_sessions_per_user = formHermesBool(form, 'threadSessionsPerUser', currentValues.threadSessionsPerUser)
+  next.worktree = formHermesBool(form, 'worktreeEnabled', currentValues.worktreeEnabled)
   return next
 }
 

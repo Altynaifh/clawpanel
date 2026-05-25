@@ -12,6 +12,7 @@ const SESSION_RUNTIME_DEFAULTS = {
   atHour: 4,
   groupSessionsPerUser: true,
   threadSessionsPerUser: false,
+  worktreeEnabled: false,
 }
 
 const COMPRESSION_DEFAULTS = {
@@ -497,6 +498,10 @@ export function render() {
             <label class="hm-channel-check">
               <input id="hm-thread-sessions-per-user" type="checkbox" ${runtimeValues.threadSessionsPerUser ? 'checked' : ''} ${disabled ? 'disabled' : ''}>
               <span>${t('engine.hermesThreadSessionsPerUser')}</span>
+            </label>
+            <label class="hm-channel-check">
+              <input id="hm-worktree-enabled" type="checkbox" ${runtimeValues.worktreeEnabled ? 'checked' : ''} ${disabled ? 'disabled' : ''}>
+              <span>${t('engine.hermesWorktreeEnabled')}</span>
             </label>
           </div>
           <div class="hm-channel-footnote">${t('engine.hermesSessionRuntimeFootnote')}</div>
@@ -2727,6 +2732,7 @@ export function render() {
       atHour: el.querySelector('#hm-session-at-hour')?.value || '4',
       groupSessionsPerUser: !!el.querySelector('#hm-group-sessions-per-user')?.checked,
       threadSessionsPerUser: !!el.querySelector('#hm-thread-sessions-per-user')?.checked,
+      worktreeEnabled: !!el.querySelector('#hm-worktree-enabled')?.checked,
     }
     runtimeSaving = true
     runtimeError = null

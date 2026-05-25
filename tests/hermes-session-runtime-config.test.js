@@ -15,6 +15,7 @@ test('Hermes 会话运行时配置读取会提供稳定表单默认值', () => {
     atHour: 4,
     groupSessionsPerUser: true,
     threadSessionsPerUser: false,
+    worktreeEnabled: false,
   })
 })
 
@@ -27,6 +28,7 @@ test('Hermes 会话运行时配置读取会回显 session_reset 与隔离开关'
     },
     group_sessions_per_user: false,
     thread_sessions_per_user: true,
+    worktree: true,
   })
 
   assert.equal(values.sessionResetMode, 'daily')
@@ -34,6 +36,7 @@ test('Hermes 会话运行时配置读取会回显 session_reset 与隔离开关'
   assert.equal(values.atHour, 3)
   assert.equal(values.groupSessionsPerUser, false)
   assert.equal(values.threadSessionsPerUser, true)
+  assert.equal(values.worktreeEnabled, true)
 })
 
 test('Hermes 会话运行时配置保存会保留无关 YAML 并写入 snake_case 字段', () => {
@@ -51,6 +54,7 @@ test('Hermes 会话运行时配置保存会保留无关 YAML 并写入 snake_cas
     atHour: '6',
     groupSessionsPerUser: false,
     threadSessionsPerUser: true,
+    worktreeEnabled: true,
   })
 
   assert.deepEqual(next.model, { provider: 'anthropic', default: 'claude-sonnet-4-6' })
@@ -61,6 +65,7 @@ test('Hermes 会话运行时配置保存会保留无关 YAML 并写入 snake_cas
   assert.equal(next.session_reset.custom_flag, 'keep-me')
   assert.equal(next.group_sessions_per_user, false)
   assert.equal(next.thread_sessions_per_user, true)
+  assert.equal(next.worktree, true)
 })
 
 test('Hermes 会话运行时配置保存会拒绝非法模式和范围', () => {

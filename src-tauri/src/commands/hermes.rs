@@ -7908,6 +7908,9 @@ fn build_hermes_session_runtime_config_values(config: &serde_yaml::Value) -> Val
     let thread_sessions_per_user = root
         .and_then(|map| yaml_bool_field(map, "thread_sessions_per_user"))
         .unwrap_or(false);
+    let worktree_enabled = root
+        .and_then(|map| yaml_bool_field(map, "worktree"))
+        .unwrap_or(false);
 
     serde_json::json!({
         "sessionResetMode": mode,
@@ -7915,6 +7918,7 @@ fn build_hermes_session_runtime_config_values(config: &serde_yaml::Value) -> Val
         "atHour": at_hour,
         "groupSessionsPerUser": group_sessions_per_user,
         "threadSessionsPerUser": thread_sessions_per_user,
+        "worktreeEnabled": worktree_enabled,
     })
 }
 
@@ -7960,6 +7964,8 @@ fn merge_hermes_session_runtime_config(
         .unwrap_or_else(|| current["groupSessionsPerUser"].as_bool().unwrap_or(true));
     let thread_sessions_per_user = form_bool(form, "threadSessionsPerUser")
         .unwrap_or_else(|| current["threadSessionsPerUser"].as_bool().unwrap_or(false));
+    let worktree_enabled = form_bool(form, "worktreeEnabled")
+        .unwrap_or_else(|| current["worktreeEnabled"].as_bool().unwrap_or(false));
 
     let root = ensure_yaml_object(config)?;
     let session_reset = yaml_child_object(root, "session_reset")?;
@@ -7979,6 +7985,10 @@ fn merge_hermes_session_runtime_config(
     root.insert(
         yaml_key("thread_sessions_per_user"),
         serde_yaml::Value::Bool(thread_sessions_per_user),
+    );
+    root.insert(
+        yaml_key("worktree"),
+        serde_yaml::Value::Bool(worktree_enabled),
     );
     Ok(())
 }
@@ -14379,6 +14389,31 @@ mod hermes_session_runtime_config_tests {
         assert_eq!(values["atHour"], 4);
         assert_eq!(values["groupSessionsPerUser"], true);
         assert_eq!(values["threadSessionsPerUser"], false);
+        assert_eq!(values["worktreeEnabled"], false);
+    }
+
+    #[test]
+    fn session_runtime_values_read_worktree_flag() {
+        let config: serde_yaml::Value = serde_yaml::from_str(
+            r#"
+session_reset:
+  mode: daily
+  idle_minutes: 720
+  at_hour: 3
+group_sessions_per_user: false
+thread_sessions_per_user: true
+worktree: true
+"#,
+        )
+        .unwrap();
+        let values = build_hermes_session_runtime_config_values(&config);
+
+        assert_eq!(values["sessionResetMode"], "daily");
+        assert_eq!(values["idleMinutes"], 720);
+        assert_eq!(values["atHour"], 3);
+        assert_eq!(values["groupSessionsPerUser"], false);
+        assert_eq!(values["threadSessionsPerUser"], true);
+        assert_eq!(values["worktreeEnabled"], true);
     }
 
     #[test]
@@ -14406,6 +14441,7 @@ streaming:
                 "atHour": "6",
                 "groupSessionsPerUser": false,
                 "threadSessionsPerUser": true,
+                "worktreeEnabled": true,
             }),
         )
         .unwrap();
@@ -14421,6 +14457,7 @@ streaming:
         );
         assert_eq!(config["group_sessions_per_user"].as_bool(), Some(false));
         assert_eq!(config["thread_sessions_per_user"].as_bool(), Some(true));
+        assert_eq!(config["worktree"].as_bool(), Some(true));
     }
 
     #[test]

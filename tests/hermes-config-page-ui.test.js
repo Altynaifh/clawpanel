@@ -9,6 +9,20 @@ function extractEngineKeys() {
   return [...source.matchAll(/['"](engine\.[A-Za-z0-9_.-]+)['"]/g)].map(match => match[1])
 }
 
+test('Hermes 配置页会暴露会话安全结构化配置字段', () => {
+  for (const id of [
+    'hm-runtime-save',
+    'hm-session-reset-mode',
+    'hm-session-idle-minutes',
+    'hm-session-at-hour',
+    'hm-group-sessions-per-user',
+    'hm-thread-sessions-per-user',
+    'hm-worktree-enabled',
+  ]) {
+    assert.match(source, new RegExp(`id="${id}"`), `缺少 ${id}`)
+  }
+})
+
 test('Hermes 配置页会暴露工具循环防护结构化配置字段', () => {
   for (const id of [
     'hm-tool-guardrails-save',
@@ -430,7 +444,8 @@ test('Hermes 配置页新增结构化配置不会暴露翻译 key', () => {
     key.includes('CheckpointsConfig') ||
     key.includes('ApprovalsConfig') ||
     key.includes('CronConfig') ||
-    key.includes('LoggingConfig')
+    key.includes('LoggingConfig') ||
+    key.includes('Worktree')
   )))
 
   assert.ok(keys.size > 0, '应能提取新增结构化配置用到的 engine 翻译 key')
