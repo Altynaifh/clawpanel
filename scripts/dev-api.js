@@ -4345,6 +4345,10 @@ export function buildHermesSkillsConfigValues(config = {}) {
   return {
     creationNudgeInterval: parseHermesInteger(skills.creation_nudge_interval, 'skills.creation_nudge_interval', 15, 0, 10000, false),
     externalDirs,
+    templateVars: readHermesBool(skills.template_vars, true),
+    inlineShell: readHermesBool(skills.inline_shell, false),
+    inlineShellTimeout: parseHermesInteger(skills.inline_shell_timeout, 'skills.inline_shell_timeout', 10, 1, 86400, false),
+    guardAgentCreated: readHermesBool(skills.guard_agent_created, false),
   }
 }
 
@@ -4355,6 +4359,10 @@ export function mergeHermesSkillsConfig(config = {}, form = {}) {
     ? mergeConfigsPreservingFields(next.skills, {})
     : {}
   skills.creation_nudge_interval = parseHermesInteger(Object.hasOwn(form, 'creationNudgeInterval') ? form.creationNudgeInterval : currentValues.creationNudgeInterval, 'skills.creation_nudge_interval', 15, 0, 10000, true)
+  skills.template_vars = formHermesBool(form, 'templateVars', currentValues.templateVars)
+  skills.inline_shell = formHermesBool(form, 'inlineShell', currentValues.inlineShell)
+  skills.inline_shell_timeout = parseHermesInteger(Object.hasOwn(form, 'inlineShellTimeout') ? form.inlineShellTimeout : currentValues.inlineShellTimeout, 'skills.inline_shell_timeout', 10, 1, 86400, true)
+  skills.guard_agent_created = formHermesBool(form, 'guardAgentCreated', currentValues.guardAgentCreated)
   const externalDirs = normalizeHermesMultilineList(Object.hasOwn(form, 'externalDirs') ? form.externalDirs : currentValues.externalDirs)
   if (externalDirs.length) skills.external_dirs = externalDirs
   else delete skills.external_dirs

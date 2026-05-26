@@ -4352,6 +4352,12 @@ fn build_hermes_skills_config_values(config: &serde_yaml::Value) -> Value {
     serde_json::json!({
         "creationNudgeInterval": creation_nudge_interval,
         "externalDirs": external_dirs,
+        "templateVars": skills.and_then(|map| yaml_bool_field(map, "template_vars")).unwrap_or(true),
+        "inlineShell": skills.and_then(|map| yaml_bool_field(map, "inline_shell")).unwrap_or(false),
+        "inlineShellTimeout": skills
+            .map(|map| bounded_hermes_i64(yaml_i64_field(map, "inline_shell_timeout"), 10, 1, 86400))
+            .unwrap_or(10),
+        "guardAgentCreated": skills.and_then(|map| yaml_bool_field(map, "guard_agent_created")).unwrap_or(false),
     })
 }
 
@@ -4368,6 +4374,17 @@ fn merge_hermes_skills_config(config: &mut serde_yaml::Value, form: &Value) -> R
         0,
         10000,
     )?;
+    let inline_shell_timeout = validate_hermes_i64(
+        if form.get("inlineShellTimeout").is_some() {
+            form_i64(form, "inlineShellTimeout")
+        } else {
+            Some(current["inlineShellTimeout"].as_i64().unwrap_or(10))
+        },
+        "skills.inline_shell_timeout",
+        10,
+        1,
+        86400,
+    )?;
     let external_dirs = normalize_hermes_multiline_list(
         form_string(form, "externalDirs")
             .or_else(|| current["externalDirs"].as_str().map(ToString::to_string)),
@@ -4378,6 +4395,31 @@ fn merge_hermes_skills_config(config: &mut serde_yaml::Value, form: &Value) -> R
     skills.insert(
         yaml_key("creation_nudge_interval"),
         serde_yaml::Value::Number(creation_nudge_interval.into()),
+    );
+    skills.insert(
+        yaml_key("template_vars"),
+        serde_yaml::Value::Bool(
+            form_bool(form, "templateVars")
+                .unwrap_or_else(|| current["templateVars"].as_bool().unwrap_or(true)),
+        ),
+    );
+    skills.insert(
+        yaml_key("inline_shell"),
+        serde_yaml::Value::Bool(
+            form_bool(form, "inlineShell")
+                .unwrap_or_else(|| current["inlineShell"].as_bool().unwrap_or(false)),
+        ),
+    );
+    skills.insert(
+        yaml_key("inline_shell_timeout"),
+        serde_yaml::Value::Number(inline_shell_timeout.into()),
+    );
+    skills.insert(
+        yaml_key("guard_agent_created"),
+        serde_yaml::Value::Bool(
+            form_bool(form, "guardAgentCreated")
+                .unwrap_or_else(|| current["guardAgentCreated"].as_bool().unwrap_or(false)),
+        ),
     );
     if external_dirs.is_empty() {
         skills.remove(yaml_key("external_dirs"));
@@ -17610,6 +17652,10 @@ mod hermes_skills_config_tests {
         let values = build_hermes_skills_config_values(&config);
         assert_eq!(values["creationNudgeInterval"], 15);
         assert_eq!(values["externalDirs"], "");
+        assert_eq!(values["templateVars"], true);
+        assert_eq!(values["inlineShell"], false);
+        assert_eq!(values["inlineShellTimeout"], 10);
+        assert_eq!(values["guardAgentCreated"], false);
     }
 
     #[test]
@@ -17621,6 +17667,10 @@ skills:
   external_dirs:
     - ~/.agents/skills
     - /home/shared/team-skills
+  template_vars: false
+  inline_shell: true
+  inline_shell_timeout: 25
+  guard_agent_created: true
 "#,
         )
         .unwrap();
@@ -17631,6 +17681,10 @@ skills:
             values["externalDirs"],
             "~/.agents/skills\n/home/shared/team-skills"
         );
+        assert_eq!(values["templateVars"], false);
+        assert_eq!(values["inlineShell"], true);
+        assert_eq!(values["inlineShellTimeout"], 25);
+        assert_eq!(values["guardAgentCreated"], true);
     }
 
     #[test]
@@ -17655,6 +17709,10 @@ memory:
             &json!({
                 "creationNudgeInterval": "0",
                 "externalDirs": " ~/.agents/skills \n\n /home/shared/team-skills ",
+                "templateVars": false,
+                "inlineShell": true,
+                "inlineShellTimeout": "30",
+                "guardAgentCreated": true,
             }),
         )
         .unwrap();
@@ -17672,6 +17730,13 @@ memory:
         assert_eq!(
             config["skills"]["external_dirs"][1].as_str(),
             Some("/home/shared/team-skills")
+        );
+        assert_eq!(config["skills"]["template_vars"].as_bool(), Some(false));
+        assert_eq!(config["skills"]["inline_shell"].as_bool(), Some(true));
+        assert_eq!(config["skills"]["inline_shell_timeout"].as_i64(), Some(30));
+        assert_eq!(
+            config["skills"]["guard_agent_created"].as_bool(),
+            Some(true)
         );
         assert_eq!(
             config["skills"]["disabled"][0].as_str(),
@@ -17693,6 +17758,12 @@ memory:
             merge_hermes_skills_config(&mut config, &json!({ "creationNudgeInterval": 10001 }))
                 .unwrap_err();
         assert!(err.contains("skills.creation_nudge_interval"));
+        let err = merge_hermes_skills_config(&mut config, &json!({ "inlineShellTimeout": 0 }))
+            .unwrap_err();
+        assert!(err.contains("skills.inline_shell_timeout"));
+        let err = merge_hermes_skills_config(&mut config, &json!({ "inlineShellTimeout": 86401 }))
+            .unwrap_err();
+        assert!(err.contains("skills.inline_shell_timeout"));
     }
 }
 

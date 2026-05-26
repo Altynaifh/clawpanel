@@ -78,6 +78,10 @@ const MEMORY_DEFAULTS = {
 const SKILLS_DEFAULTS = {
   creationNudgeInterval: 15,
   externalDirs: '',
+  templateVars: true,
+  inlineShell: false,
+  inlineShellTimeout: 10,
+  guardAgentCreated: false,
 }
 
 const QUICK_COMMANDS_DEFAULTS = {
@@ -935,9 +939,27 @@ export function render() {
               <span class="hm-field-label">${t('engine.hermesSkillsConfigCreationNudgeInterval')}</span>
               <input id="hm-skills-creation-nudge-interval" class="hm-input" type="number" inputmode="numeric" min="0" max="10000" step="1" value="${esc(skillsValues.creationNudgeInterval)}" ${disabled ? 'disabled' : ''}>
             </label>
+            <label class="hm-field">
+              <span class="hm-field-label">${t('engine.hermesSkillsConfigInlineShellTimeout')}</span>
+              <input id="hm-skills-inline-shell-timeout" class="hm-input" type="number" inputmode="numeric" min="1" max="86400" step="1" value="${esc(skillsValues.inlineShellTimeout)}" ${disabled ? 'disabled' : ''}>
+            </label>
             <label class="hm-field hm-field--wide">
               <span class="hm-field-label">${t('engine.hermesSkillsConfigExternalDirs')}</span>
               <textarea id="hm-skills-external-dirs" class="hm-input" spellcheck="false" rows="3" ${disabled ? 'disabled' : ''}>${esc(skillsValues.externalDirs)}</textarea>
+            </label>
+          </div>
+          <div class="hm-config-check-grid">
+            <label class="hm-channel-check">
+              <input id="hm-skills-template-vars" type="checkbox" ${skillsValues.templateVars ? 'checked' : ''} ${disabled ? 'disabled' : ''}>
+              <span>${t('engine.hermesSkillsConfigTemplateVars')}</span>
+            </label>
+            <label class="hm-channel-check">
+              <input id="hm-skills-inline-shell" type="checkbox" ${skillsValues.inlineShell ? 'checked' : ''} ${disabled ? 'disabled' : ''}>
+              <span>${t('engine.hermesSkillsConfigInlineShell')}</span>
+            </label>
+            <label class="hm-channel-check">
+              <input id="hm-skills-guard-agent-created" type="checkbox" ${skillsValues.guardAgentCreated ? 'checked' : ''} ${disabled ? 'disabled' : ''}>
+              <span>${t('engine.hermesSkillsConfigGuardAgentCreated')}</span>
             </label>
           </div>
           <div class="hm-channel-footnote">${t('engine.hermesSkillsConfigFootnote')}</div>
@@ -3180,6 +3202,10 @@ export function render() {
   async function saveSkillsConfig() {
     const form = {
       creationNudgeInterval: el.querySelector('#hm-skills-creation-nudge-interval')?.value || '15',
+      templateVars: !!el.querySelector('#hm-skills-template-vars')?.checked,
+      inlineShell: !!el.querySelector('#hm-skills-inline-shell')?.checked,
+      inlineShellTimeout: el.querySelector('#hm-skills-inline-shell-timeout')?.value || '10',
+      guardAgentCreated: !!el.querySelector('#hm-skills-guard-agent-created')?.checked,
       externalDirs: el.querySelector('#hm-skills-external-dirs')?.value || '',
     }
     skillsSaving = true

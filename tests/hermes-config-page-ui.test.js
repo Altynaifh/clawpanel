@@ -57,6 +57,10 @@ test('Hermes 配置页会暴露 Skills 结构化配置字段', () => {
   for (const id of [
     'hm-skills-config-save',
     'hm-skills-creation-nudge-interval',
+    'hm-skills-template-vars',
+    'hm-skills-inline-shell',
+    'hm-skills-inline-shell-timeout',
+    'hm-skills-guard-agent-created',
     'hm-skills-external-dirs',
   ]) {
     assert.match(source, new RegExp(`id="${id}"`), `缺少 ${id}`)
