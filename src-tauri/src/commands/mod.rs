@@ -152,10 +152,18 @@ fn panel_config_candidate_paths() -> Vec<PathBuf> {
     paths
 }
 
+fn read_json_file_content(path: &std::path::Path) -> Option<String> {
+    let raw = std::fs::read(path).ok()?;
+    let bytes = if raw.starts_with(&[0xEF, 0xBB, 0xBF]) {
+        &raw[3..]
+    } else {
+        &raw
+    };
+    Some(String::from_utf8_lossy(bytes).into_owned())
+}
+
 fn read_panel_config_from(path: &std::path::Path) -> Option<serde_json::Value> {
-    std::fs::read_to_string(path)
-        .ok()
-        .and_then(|content| serde_json::from_str(&content).ok())
+    read_json_file_content(path).and_then(|content| serde_json::from_str(&content).ok())
 }
 
 fn normalize_custom_openclaw_dir(raw: &str) -> Option<PathBuf> {
@@ -230,7 +238,7 @@ pub fn gateway_listen_port() -> u16 {
 
 fn read_gateway_port_from_config() -> u16 {
     let config_path = openclaw_dir().join("openclaw.json");
-    if let Ok(content) = std::fs::read_to_string(&config_path) {
+    if let Some(content) = read_json_file_content(&config_path) {
         if let Ok(val) = serde_json::from_str::<serde_json::Value>(&content) {
             if let Some(port) = val
                 .get("gateway")
