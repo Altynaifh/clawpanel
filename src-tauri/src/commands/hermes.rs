@@ -1762,14 +1762,10 @@ const HERMES_DASHBOARD_WEB_DIST_INDEX_HTML: &str = r#"<!doctype html>
 </html>
 "#;
 
-/// Locate the installed `hermes_cli` package directory inside the uv tool venv.
-///
-/// Layouts vary by platform:
-///   - Windows: `<uv tool dir>/hermes-agent/Lib/site-packages/hermes_cli`
-///   - macOS / Linux: `<uv tool dir>/hermes-agent/lib/python3.X/site-packages/hermes_cli`
-///
-/// Returns `None` if uv is unavailable or hermes-agent is not installed.
-fn locate_hermes_cli_package_dir() -> Option<std::path::PathBuf> {
+/// Resolve `<uv tool dir>/hermes-agent` — the venv root that `uv tool install`
+/// creates. Returns `None` if `uv` is unavailable or hermes-agent isn't installed
+/// via the uv-tool path (e.g. user is on the legacy `~/.hermes-venv` uv-pip path).
+fn hermes_uv_tool_root() -> Option<std::path::PathBuf> {
     let uv_path = uv_bin_path();
     let uv_cmd = if uv_path.exists() {
         uv_path.to_string_lossy().to_string()
@@ -1792,10 +1788,41 @@ fn locate_hermes_cli_package_dir() -> Option<std::path::PathBuf> {
     if stdout.is_empty() {
         return None;
     }
-    let hermes_root = std::path::PathBuf::from(&stdout).join("hermes-agent");
-    if !hermes_root.exists() {
-        return None;
+    let root = std::path::PathBuf::from(&stdout).join("hermes-agent");
+    if root.exists() {
+        Some(root)
+    } else {
+        None
     }
+}
+
+/// Locate the Python interpreter inside the uv-tool hermes-agent venv.
+///
+/// Layouts vary by platform:
+///   - Windows: `<uv tool dir>/hermes-agent/Scripts/python.exe`
+///   - macOS / Linux: `<uv tool dir>/hermes-agent/bin/python`
+fn hermes_uv_tool_python() -> Option<std::path::PathBuf> {
+    let root = hermes_uv_tool_root()?;
+    #[cfg(target_os = "windows")]
+    let py = root.join("Scripts").join("python.exe");
+    #[cfg(not(target_os = "windows"))]
+    let py = root.join("bin").join("python");
+    if py.exists() {
+        Some(py)
+    } else {
+        None
+    }
+}
+
+/// Locate the installed `hermes_cli` package directory inside the uv tool venv.
+///
+/// Layouts vary by platform:
+///   - Windows: `<uv tool dir>/hermes-agent/Lib/site-packages/hermes_cli`
+///   - macOS / Linux: `<uv tool dir>/hermes-agent/lib/python3.X/site-packages/hermes_cli`
+///
+/// Returns `None` if uv is unavailable or hermes-agent is not installed.
+fn locate_hermes_cli_package_dir() -> Option<std::path::PathBuf> {
+    let hermes_root = hermes_uv_tool_root()?;
 
     let windows_path = hermes_root
         .join("Lib")
@@ -12769,9 +12796,12 @@ pub async fn hermes_read_config_full() -> Result<Value, String> {
 
 /// 找到 Hermes venv 的 Python 解释器路径
 ///
-/// 优先级（P1-3 优化）：
-/// 1. 环境变量 `HERMES_PYTHON` — 适配自定义 venv（brew / uv tool / 容器等非默认路径）
-/// 2. ~/.hermes-venv/bin/python (Unix) 或 ~/.hermes-venv/Scripts/python.exe (Windows)
+/// 优先级：
+/// 1. 环境变量 `HERMES_PYTHON` — 适配自定义 venv（brew / 容器 / 任何非默认布局）
+/// 2. `~/.hermes-venv/{Scripts,bin}/python` — `uv pip install` 备选安装路径
+/// 3. `<uv tool dir>/hermes-agent/{Scripts,bin}/python` — `uv tool install` 默认路径
+///    （ClawPanel `install_hermes` 默认走此分支，所以这里的 fallback 必不可少；
+///    早期实现只查路径 #2 导致「可选依赖管理」等页面对绝大多数用户都误报「未安装」）
 fn hermes_venv_python() -> Option<PathBuf> {
     // 1. HERMES_PYTHON 环境变量优先
     if let Ok(custom) = std::env::var("HERMES_PYTHON") {
@@ -12780,23 +12810,25 @@ fn hermes_venv_python() -> Option<PathBuf> {
             return Some(p);
         }
     }
-    // 2. 默认 venv 位置
-    let venv_dir = dirs::home_dir()?.join(".hermes-venv");
-    #[cfg(target_os = "windows")]
-    let py = venv_dir.join("Scripts").join("python.exe");
-    #[cfg(not(target_os = "windows"))]
-    let py = venv_dir.join("bin").join("python");
-    if py.exists() {
-        Some(py)
-    } else {
-        None
+    // 2. 旧的 ~/.hermes-venv 位置（uv pip install 路径）
+    if let Some(home) = dirs::home_dir() {
+        let venv_dir = home.join(".hermes-venv");
+        #[cfg(target_os = "windows")]
+        let py = venv_dir.join("Scripts").join("python.exe");
+        #[cfg(not(target_os = "windows"))]
+        let py = venv_dir.join("bin").join("python");
+        if py.exists() {
+            return Some(py);
+        }
     }
+    // 3. uv tool 默认路径（ClawPanel 默认安装方式）
+    hermes_uv_tool_python()
 }
 
 /// 统一跑 venv python -c "<script>" 拿 JSON 结果。失败给可读错误。
 async fn run_venv_python_json(script: &str) -> Result<Value, String> {
     let py = hermes_venv_python().ok_or_else(|| {
-        "Hermes venv 未找到（~/.hermes-venv 不存在）。请先安装 Hermes。".to_string()
+        "Hermes Python 解释器未找到（已尝试 HERMES_PYTHON、~/.hermes-venv 与 uv tool 路径）。请先安装 Hermes。".to_string()
     })?;
 
     let mut cmd = tokio::process::Command::new(&py);
